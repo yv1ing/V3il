@@ -1,0 +1,868 @@
+import { Button } from "@douyinfe/semi-ui";
+import { Maximize2, Minimize2, Minus, FolderOpen, SquareTerminal, X } from "lucide-react";
+import {
+  CSSProperties,
+  createContext,
+  ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  lazy,
+  MutableRefObject,
+  useMemo,
+  PointerEvent as ReactPointerEvent,
+  useRef,
+  Suspense,
+} from "react";
+import type { FitAddon } from "@xterm/addon-fit";
+import type { Terminal } from "@xterm/xterm";
+import { buildHostShellUrl } from "../../shared/api/hosts";
+import { buildContainerShellUrl } from "../../shared/api/sandboxContainers";
+import { SANDBOX_CONTAINER_STATUS } from "../../shared/api/generated/constants";
+import { showApiError } from "../../shared/api/feedback";
+import type { ManagedHost, SandboxContainer } from "../../shared/api/types";
+import { cx } from "../../shared/lib/className";
+import {
+  clamp,
+  clampWindowToViewport,
+  DEFAULT_WINDOW_HEIGHT,
+  DEFAULT_WINDOW_WIDTH,
+  type DockState,
+  type DragState,
+  type FlightState,
+  getDraggedWindowPosition,
+  getInitialFileManagerRect,
+  getMaximizedRect,
+  getResizedWindowSize,
+  getWindowRect,
+  MIN_WINDOW_HEIGHT,
+  type Rect,
+  type ResizeState,
+  type WindowStateBase,
+} from "./floatingWindow";
+import { useFloatingWindowController } from "./useFloatingWindowController";
+
+const ContainerFileManager = lazy(() => import("./ContainerFileManager").then((module) => ({ default: module.ContainerFileManager })));
+
+type ShellStatus = "idle" | "connecting" | "open" | "closed";
+
+type ShellWindowState = WindowStateBase & {
+  connectionKey: number;
+  shellUrl: string;
+  targetKey: string;
+  status: ShellStatus;
+  isMaximized: boolean;
+  restoreRect: Rect | null;
+};
+
+type ShellTarget = {
+  key: string;
+  title: string;
+  url: string;
+};
+
+type FileManagerWindowState = WindowStateBase & {
+  containerId: number;
+  containerName: string;
+  isMaximized: boolean;
+  restoreRect: Rect | null;
+};
+
+type ContainerShellContextValue = {
+  openFileManager: (container: SandboxContainer) => void;
+  openHostShell: (host: ManagedHost) => void;
+  openShell: (container: SandboxContainer) => void;
+  syncContainerWindows: (container: SandboxContainer | null) => void;
+};
+
+type FloatingWindowProps = {
+  actions: ReactNode;
+  children: ReactNode;
+  className?: string;
+  dockState: DockState;
+  icon: ReactNode;
+  isMaximized?: boolean;
+  meta: string;
+  onHeaderPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  rect: Rect;
+  resizeHandle?: ReactNode;
+  title: string;
+};
+
+type FloatingWindowFlightProps = {
+  flight: FlightState;
+  frameRef: MutableRefObject<HTMLDivElement | null>;
+  icon: ReactNode;
+  style?: CSSProperties;
+};
+
+type MinimizedWindowButtonProps = {
+  ariaLabel: string;
+  className?: string;
+  icon: ReactNode;
+  onClick: () => void;
+};
+
+type FloatingWindowLayerProps = {
+  actions: ReactNode;
+  children: ReactNode;
+  flight: FlightState | null;
+  flightIcon: ReactNode;
+  flightRef: MutableRefObject<HTMLDivElement | null>;
+  flightStyle?: CSSProperties;
+  icon: ReactNode;
+  meta: string;
+  minimizedAriaLabel: string;
+  minimizedClassName?: string;
+  minimizedIcon: ReactNode;
+  onHeaderPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  onRestore: () => void;
+  resizeHandle?: ReactNode;
+  state: WindowStateBase & { isMaximized?: boolean };
+};
+
+type WindowControlsProps = {
+  closeAriaLabel: string;
+  maximizeAriaLabel?: string;
+  minimizeAriaLabel: string;
+  isMaximized?: boolean;
+  onClose: () => void;
+  onMaximize?: () => void;
+  onMinimize: () => void;
+  restoreAriaLabel?: string;
+};
+
+type FitTerminalOptions = {
+  snapHeight?: boolean;
+};
+
+const SHELL_OUTPUT_DECODER = new TextDecoder();
+
+function shellFlightMeta(state: ShellWindowState) {
+  return state.status;
+}
+
+async function loadXterm() {
+  const [{ Terminal }, { FitAddon }] = await Promise.all([
+    import("@xterm/xterm"),
+    import("@xterm/addon-fit"),
+    import("@xterm/xterm/css/xterm.css"),
+  ]);
+  return { Terminal, FitAddon };
+}
+
+const ContainerShellContext = createContext<ContainerShellContextValue | null>(null);
+
+export function useContainerShell() {
+  const value = useContext(ContainerShellContext);
+  if (!value) throw new Error("useContainerShell must be used inside ContainerShellProvider");
+  return value;
+}
+
+export function ContainerShellProvider({ children }: { children: ReactNode }) {
+  const terminalHostRef = useRef<HTMLDivElement | null>(null);
+  const terminalRef = useRef<Terminal | null>(null);
+  const fitRef = useRef<FitAddon | null>(null);
+  const socketRef = useRef<WebSocket | null>(null);
+  const resizeRef = useRef<ResizeState | null>(null);
+  const fitWithoutSnapRef = useRef(false);
+  const connectionKeyRef = useRef(0);
+
+  const disposeShellResources = useCallback(() => {
+    closeSocket(socketRef.current);
+    socketRef.current = null;
+    terminalRef.current?.dispose();
+    terminalRef.current = null;
+    fitRef.current = null;
+  }, []);
+
+  const prepareShellRestore = useCallback(() => {
+    fitWithoutSnapRef.current = true;
+  }, []);
+
+  const {
+    state: shell,
+    setState: setShell,
+    stateRef: shellRef,
+    flight: shellFlight,
+    flightRef: shellFlightRef,
+    flightStyle: shellFlightStyle,
+    dragRef,
+    cancelFlight: cancelShellFlight,
+    close: closeShell,
+    minimize: minimizeShell,
+    restore: restoreShell,
+  } = useFloatingWindowController<ShellWindowState>({
+    dockSlot: "shell",
+    flightMeta: shellFlightMeta,
+    onClose: disposeShellResources,
+    onRestore: prepareShellRestore,
+  });
+  const {
+    state: fileManager,
+    setState: setFileManager,
+    stateRef: fileManagerRef,
+    flight: fileManagerFlight,
+    flightRef: fileManagerFlightRef,
+    flightStyle: fileManagerFlightStyle,
+    dragRef: fileManagerDragRef,
+    cancelFlight: cancelFileManagerFlight,
+    close: closeFileManager,
+    minimize: minimizeFileManager,
+    restore: restoreFileManager,
+  } = useFloatingWindowController<FileManagerWindowState>({
+    dockSlot: "filemanager",
+    flightMeta: "files",
+  });
+  const activeShellUrl = shell?.shellUrl ?? null;
+  const activeConnectionKey = shell?.connectionKey ?? null;
+
+  const sendResize = useCallback(() => {
+    const terminal = terminalRef.current;
+    const socket = socketRef.current;
+    if (!terminal || !socket || socket.readyState !== WebSocket.OPEN) return;
+    socket.send(JSON.stringify({ type: "resize", rows: terminal.rows, cols: terminal.cols }));
+  }, []);
+
+  const fitTerminal = useCallback((options: FitTerminalOptions = {}) => {
+    if (!fitRef.current || !terminalRef.current || !terminalHostRef.current) return;
+    fitRef.current.fit();
+    if (options.snapHeight !== false) {
+      snapShellHeightToRows(terminalHostRef.current, terminalRef.current, setShell);
+    }
+    sendResize();
+  }, [sendResize]);
+
+  const toggleMaximizeShell = useCallback(() => {
+    cancelShellFlight();
+    dragRef.current = null;
+    resizeRef.current = null;
+    fitWithoutSnapRef.current = true;
+    setShell((current) => {
+      if (!current) return current;
+      if (current.isMaximized) {
+        const restoreRect = current.restoreRect ?? getWindowRect(current);
+        return { ...current, ...restoreRect, isMaximized: false, restoreRect: null };
+      }
+
+      return {
+        ...current,
+        ...getMaximizedRect(),
+        isMaximized: true,
+        restoreRect: getWindowRect(current),
+      };
+    });
+  }, [cancelShellFlight, dragRef, setShell]);
+
+  const openShellTarget = useCallback((target: ShellTarget) => {
+    const currentShell = shellRef.current;
+    if (currentShell?.targetKey === target.key && isSocketActive(socketRef.current)) {
+      const preserveGeometry = currentShell.dockState === "minimized";
+      cancelShellFlight();
+      fitWithoutSnapRef.current = preserveGeometry;
+      setShell((current) => {
+        const next: ShellWindowState | null = current ? {
+          ...current,
+          title: target.title,
+          shellUrl: target.url,
+          dockState: "normal",
+        } : current;
+        shellRef.current = next;
+        return next;
+      });
+      window.setTimeout(() => {
+        fitTerminal({ snapHeight: !preserveGeometry });
+        terminalRef.current?.focus();
+      }, 0);
+      return;
+    }
+
+    cancelShellFlight();
+    disposeShellResources();
+
+    const nextShell: ShellWindowState = {
+      connectionKey: connectionKeyRef.current + 1,
+      shellUrl: target.url,
+      targetKey: target.key,
+      title: target.title,
+      dockState: "normal",
+      status: "connecting",
+      isMaximized: false,
+      restoreRect: null,
+      x: Math.max(24, window.innerWidth - DEFAULT_WINDOW_WIDTH - 36),
+      y: Math.max(92, window.innerHeight - DEFAULT_WINDOW_HEIGHT - 36),
+      width: DEFAULT_WINDOW_WIDTH,
+      height: DEFAULT_WINDOW_HEIGHT,
+    };
+    shellRef.current = nextShell;
+    setShell(nextShell);
+    connectionKeyRef.current += 1;
+  }, [cancelShellFlight, disposeShellResources, fitTerminal, setShell, shellRef]);
+
+  const openShell = useCallback((container: SandboxContainer) => {
+    if (container.status !== SANDBOX_CONTAINER_STATUS.RUNNING || container.control_proxy_host_port <= 0) return;
+
+    openShellTarget({
+      key: `container:${container.id}`,
+      title: container.container_name,
+      url: buildContainerShellUrl(container.id),
+    });
+  }, [openShellTarget]);
+
+  const openHostShell = useCallback((host: ManagedHost) => {
+    openShellTarget({
+      key: `host:${host.id}`,
+      title: `${host.host_account}@${host.ip_address}`,
+      url: buildHostShellUrl(host.id),
+    });
+  }, [openShellTarget]);
+
+  const toggleMaximizeFileManager = useCallback(() => {
+    cancelFileManagerFlight();
+    fileManagerDragRef.current = null;
+    resizeRef.current = null;
+    setFileManager((current) => {
+      if (!current) return current;
+      if (current.isMaximized) {
+        const restoreRect = current.restoreRect ?? getWindowRect(current);
+        return { ...current, ...restoreRect, isMaximized: false, restoreRect: null };
+      }
+
+      return {
+        ...current,
+        ...getMaximizedRect(),
+        isMaximized: true,
+        restoreRect: getWindowRect(current),
+      };
+    });
+  }, [cancelFileManagerFlight, fileManagerDragRef, setFileManager]);
+
+  const openFileManager = useCallback((container: SandboxContainer) => {
+    if (container.status !== SANDBOX_CONTAINER_STATUS.RUNNING || container.control_proxy_host_port <= 0) return;
+
+    cancelFileManagerFlight();
+    setFileManager((current) => {
+      if (current?.containerId === container.id) {
+        const next: FileManagerWindowState = { ...current, title: container.container_name, containerName: container.container_name, dockState: "normal" };
+        fileManagerRef.current = next;
+        return next;
+      }
+
+      const next: FileManagerWindowState = {
+        containerId: container.id,
+        title: container.container_name,
+        containerName: container.container_name,
+        dockState: "normal",
+        isMaximized: false,
+        restoreRect: null,
+        ...getInitialFileManagerRect(),
+      };
+      fileManagerRef.current = next;
+      return next;
+    });
+  }, [cancelFileManagerFlight, fileManagerRef, setFileManager]);
+
+  const syncContainerWindows = useCallback((container: SandboxContainer | null) => {
+    const currentShell = shellRef.current;
+    const currentFileManager = fileManagerRef.current;
+
+    if (currentShell?.targetKey.startsWith("container:")) {
+      if (container && container.status === SANDBOX_CONTAINER_STATUS.RUNNING && container.control_proxy_host_port > 0) {
+        openShell(container);
+      } else {
+        closeShell();
+      }
+    }
+
+    if (currentFileManager) {
+      if (container && container.status === SANDBOX_CONTAINER_STATUS.RUNNING && container.control_proxy_host_port > 0) {
+        openFileManager(container);
+      } else {
+        closeFileManager();
+      }
+    }
+
+  }, [closeFileManager, closeShell, openFileManager, openShell]);
+
+  useEffect(() => {
+    if (!activeShellUrl || activeConnectionKey === null || terminalRef.current || !terminalHostRef.current) return;
+
+    let canceled = false;
+    let terminal: Terminal | null = null;
+    let fit: FitAddon | null = null;
+    let socket: WebSocket | null = null;
+    let disposable: { dispose: () => void } | null = null;
+
+    const updateShellStatus = (status: ShellStatus) => {
+      setShell((current) => (
+        current?.connectionKey === activeConnectionKey && current.shellUrl === activeShellUrl
+          ? { ...current, status }
+          : current
+      ));
+    };
+    const onSocketTerminated = () => updateShellStatus("closed");
+    const onSocketOpen = () => {
+      updateShellStatus("open");
+      terminal?.focus();
+      fitTerminal({ snapHeight: false });
+    };
+    const onSocketMessage = (event: MessageEvent) => {
+      if (!terminal) return;
+      if (typeof event.data === "string") {
+        terminal.write(event.data);
+        return;
+      }
+      terminal.write(SHELL_OUTPUT_DECODER.decode(event.data as ArrayBuffer));
+    };
+    const cleanup = () => {
+      disposable?.dispose();
+      if (socket) {
+        socket.removeEventListener("open", onSocketOpen);
+        socket.removeEventListener("message", onSocketMessage);
+        socket.removeEventListener("close", onSocketTerminated);
+        socket.removeEventListener("error", onSocketTerminated);
+        socket.close();
+      }
+      terminal?.dispose();
+      if (socketRef.current === socket) socketRef.current = null;
+      if (terminalRef.current === terminal) terminalRef.current = null;
+      if (fitRef.current === fit) fitRef.current = null;
+      disposable = null;
+      socket = null;
+      terminal = null;
+      fit = null;
+    };
+
+    void loadXterm()
+      .then(({ Terminal, FitAddon }) => {
+        if (canceled || !terminalHostRef.current) return;
+
+        terminal = new Terminal({
+          cursorBlink: true,
+          convertEol: true,
+          fontFamily: "JetBrains Mono, SFMono-Regular, Consolas, monospace",
+          fontSize: 13,
+          theme: {
+            background: "#0b1018",
+            foreground: "#b7c6d7",
+            cursor: "#ffffff",
+            selectionBackground: "rgba(59, 130, 246, 0.24)",
+          },
+        });
+        fit = new FitAddon();
+        terminal.loadAddon(fit);
+        terminal.open(terminalHostRef.current);
+        terminalRef.current = terminal;
+        fitRef.current = fit;
+        window.setTimeout(fitTerminal, 0);
+
+        try {
+          socket = new WebSocket(activeShellUrl);
+        } catch (error) {
+          cleanup();
+          showApiError(error);
+          updateShellStatus("closed");
+          return;
+        }
+
+        socket.binaryType = "arraybuffer";
+        socketRef.current = socket;
+
+        disposable = terminal.onData((data) => {
+          if (socket?.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ type: "input", data }));
+          }
+        });
+
+        socket.addEventListener("open", onSocketOpen);
+        socket.addEventListener("message", onSocketMessage);
+        socket.addEventListener("close", onSocketTerminated);
+        socket.addEventListener("error", onSocketTerminated);
+      })
+      .catch((error) => {
+        if (canceled) return;
+        showApiError(error);
+        updateShellStatus("closed");
+      });
+
+    return () => {
+      canceled = true;
+      cleanup();
+    };
+  }, [activeConnectionKey, activeShellUrl, fitTerminal]);
+
+  useEffect(() => {
+    if (!shell || shell.dockState !== "normal") return;
+    const snapHeight = !fitWithoutSnapRef.current;
+    fitWithoutSnapRef.current = false;
+    window.setTimeout(() => fitTerminal({ snapHeight }), 0);
+  }, [fitTerminal, shell?.dockState, shell?.height, shell?.width]);
+
+  useEffect(() => {
+    const onWindowResize = () => {
+      setShell((current) => current?.isMaximized ? { ...current, ...getMaximizedRect() } : current);
+      setFileManager((current) => {
+        if (!current) return current;
+        if (current.isMaximized) return { ...current, ...getMaximizedRect() };
+        return clampWindowToViewport(current);
+      });
+      if (shell?.dockState === "normal") window.setTimeout(fitTerminal, 0);
+    };
+    window.addEventListener("resize", onWindowResize);
+    return () => window.removeEventListener("resize", onWindowResize);
+  }, [fitTerminal, shell?.dockState]);
+
+  const onPointerMove = useCallback((event: PointerEvent) => {
+    const drag = dragRef.current;
+    if (drag) {
+      setShell((current) => current ? {
+        ...current,
+        ...getDraggedWindowPosition(drag, event),
+      } : current);
+      return;
+    }
+
+    const fmDrag = fileManagerDragRef.current;
+    if (fmDrag) {
+      setFileManager((current) => current ? {
+        ...current,
+        ...getDraggedWindowPosition(fmDrag, event),
+      } : current);
+      return;
+    }
+
+    const resize = resizeRef.current;
+    if (resize) {
+      const nextSize = getResizedWindowSize(resize, event);
+      if (resize.target === "shell") {
+        setShell((current) => current ? { ...current, ...nextSize } : current);
+        return;
+      }
+      setFileManager((current) => current ? { ...current, ...nextSize } : current);
+    }
+  }, []);
+
+  const stopPointerAction = useCallback(() => {
+    dragRef.current = null;
+    fileManagerDragRef.current = null;
+    resizeRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", stopPointerAction);
+    return () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", stopPointerAction);
+    };
+  }, [onPointerMove, stopPointerAction]);
+
+  const contextValue = useMemo<ContainerShellContextValue>(
+    () => ({ openFileManager, openHostShell, openShell, syncContainerWindows }),
+    [openFileManager, openHostShell, openShell, syncContainerWindows],
+  );
+  return (
+    <ContainerShellContext.Provider value={contextValue}>
+      {children}
+      {shell ? (
+        <FloatingWindowLayer
+          actions={(
+            <WindowControls
+              closeAriaLabel="Close shell"
+              isMaximized={shell.isMaximized}
+              maximizeAriaLabel="Maximize shell"
+              minimizeAriaLabel="Minimize shell"
+              onClose={closeShell}
+              onMaximize={toggleMaximizeShell}
+              onMinimize={minimizeShell}
+              restoreAriaLabel="Restore shell size"
+            />
+          )}
+          flight={shellFlight}
+          flightIcon={<SquareTerminal size={15} />}
+          flightRef={shellFlightRef}
+          flightStyle={shellFlightStyle}
+          icon={<SquareTerminal size={16} />}
+          meta={shell.status}
+          minimizedAriaLabel="Restore shell"
+          minimizedIcon={<SquareTerminal size={20} />}
+          onHeaderPointerDown={(event) => {
+            if (shell.isMaximized) return;
+            dragRef.current = beginWindowDrag(shell, event);
+          }}
+          onRestore={restoreShell}
+          resizeHandle={(
+            <div
+              className="shell-resize-handle"
+              onPointerDown={(event) => {
+                if (shell.isMaximized) return;
+                resizeRef.current = beginWindowResize("shell", shell, event);
+              }}
+            />
+          )}
+          state={shell}
+        >
+          <div ref={terminalHostRef} className="shell-terminal" />
+        </FloatingWindowLayer>
+      ) : null}
+      {fileManager ? (
+        <FloatingWindowLayer
+          actions={(
+            <WindowControls
+              closeAriaLabel="Close file manager"
+              isMaximized={fileManager.isMaximized}
+              maximizeAriaLabel="Maximize file manager"
+              minimizeAriaLabel="Minimize file manager"
+              onClose={closeFileManager}
+              onMaximize={toggleMaximizeFileManager}
+              onMinimize={minimizeFileManager}
+              restoreAriaLabel="Restore file manager size"
+            />
+          )}
+          flight={fileManagerFlight}
+          flightIcon={<FolderOpen size={15} />}
+          flightRef={fileManagerFlightRef}
+          flightStyle={fileManagerFlightStyle}
+          icon={<FolderOpen size={16} />}
+          meta="files"
+          minimizedAriaLabel="Restore file manager"
+          minimizedClassName="filemanager-minimized-button"
+          minimizedIcon={<FolderOpen size={20} />}
+          onHeaderPointerDown={(event) => {
+            if (fileManager.isMaximized) return;
+            fileManagerDragRef.current = beginWindowDrag(fileManager, event, { capturePointer: true });
+          }}
+          onRestore={restoreFileManager}
+          resizeHandle={(
+            <div
+              className="shell-resize-handle"
+              onPointerDown={(event) => {
+                if (fileManager.isMaximized) return;
+                resizeRef.current = beginWindowResize("filemanager", fileManager, event);
+              }}
+            />
+          )}
+          state={fileManager}
+        >
+          <Suspense fallback={<div className="file-manager-loading">Loading files...</div>}>
+            <ContainerFileManager key={fileManager.containerId} containerId={fileManager.containerId} />
+          </Suspense>
+        </FloatingWindowLayer>
+      ) : null}
+    </ContainerShellContext.Provider>
+  );
+}
+
+function FloatingWindowLayer({
+  actions,
+  children,
+  flight,
+  flightIcon,
+  flightRef,
+  flightStyle,
+  icon,
+  meta,
+  minimizedAriaLabel,
+  minimizedClassName,
+  minimizedIcon,
+  onHeaderPointerDown,
+  onRestore,
+  resizeHandle,
+  state,
+}: FloatingWindowLayerProps) {
+  return (
+    <>
+      <FloatingWindow
+        actions={actions}
+        dockState={state.dockState}
+        icon={icon}
+        isMaximized={state.isMaximized}
+        meta={meta}
+        rect={state}
+        title={state.title}
+        onHeaderPointerDown={onHeaderPointerDown}
+        resizeHandle={resizeHandle}
+      >
+        {children}
+      </FloatingWindow>
+      {state.dockState === "minimized" && !flight ? (
+        <MinimizedWindowButton className={minimizedClassName} ariaLabel={minimizedAriaLabel} icon={minimizedIcon} onClick={onRestore} />
+      ) : null}
+      {flight ? (
+        <FloatingWindowFlight frameRef={flightRef} flight={flight} icon={flightIcon} style={flightStyle} />
+      ) : null}
+    </>
+  );
+}
+
+function WindowControls({
+  closeAriaLabel,
+  isMaximized = false,
+  maximizeAriaLabel,
+  minimizeAriaLabel,
+  onClose,
+  onMaximize,
+  onMinimize,
+  restoreAriaLabel,
+}: WindowControlsProps) {
+  return (
+    <>
+      <Button icon={<Minus size={14} />} theme="borderless" type="tertiary" onClick={onMinimize} aria-label={minimizeAriaLabel} />
+      {onMaximize ? (
+        <Button icon={isMaximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />} theme="borderless" type="tertiary" onClick={onMaximize} aria-label={isMaximized ? restoreAriaLabel : maximizeAriaLabel} />
+      ) : null}
+      <Button icon={<X size={14} />} theme="borderless" type="tertiary" onClick={onClose} aria-label={closeAriaLabel} />
+    </>
+  );
+}
+
+function FloatingWindow({
+  actions,
+  children,
+  className,
+  dockState,
+  icon,
+  isMaximized = false,
+  meta,
+  onHeaderPointerDown,
+  rect,
+  resizeHandle,
+  title,
+}: FloatingWindowProps) {
+  return (
+    <div className={buildWindowClassName(className, dockState, isMaximized)} style={buildWindowStyle(rect)}>
+      <FloatingWindowHeader
+        actions={actions}
+        icon={icon}
+        meta={meta}
+        title={title}
+        onPointerDown={onHeaderPointerDown}
+      />
+      {children}
+      {resizeHandle}
+    </div>
+  );
+}
+
+function FloatingWindowHeader({
+  actions,
+  icon,
+  meta,
+  onPointerDown,
+  title,
+}: Pick<FloatingWindowProps, "actions" | "icon" | "meta" | "title"> & {
+  onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
+}) {
+  return (
+    <div className="shell-window-header" onPointerDown={onPointerDown}>
+      <div className="shell-window-title">
+        {icon}
+        <span>{title}</span>
+        <em>{meta}</em>
+      </div>
+      <div className="shell-window-actions" onPointerDown={(event) => event.stopPropagation()}>
+        {actions}
+      </div>
+    </div>
+  );
+}
+
+function FloatingWindowFlight({ flight, frameRef, icon, style }: FloatingWindowFlightProps) {
+  return (
+    <div ref={frameRef} className={cx("shell-flight", `shell-flight-${flight.direction}`)} style={style}>
+      <div className="shell-flight-header">
+        {icon}
+        <span>{flight.title}</span>
+        <em>{flight.meta}</em>
+      </div>
+      <div className="shell-flight-body" />
+    </div>
+  );
+}
+
+function MinimizedWindowButton({ ariaLabel, className, icon, onClick }: MinimizedWindowButtonProps) {
+  return (
+    <button className={cx("shell-minimized-button", className)} type="button" onClick={onClick} aria-label={ariaLabel}>
+      {icon}
+    </button>
+  );
+}
+
+function buildWindowClassName(className: string | undefined, dockState: DockState, isMaximized: boolean) {
+  return cx(
+    "shell-window",
+    className,
+    dockState === "minimized" && "shell-window-hidden",
+    isMaximized && "shell-window-maximized",
+  );
+}
+
+function beginWindowDrag(
+  rect: Rect,
+  event: ReactPointerEvent<HTMLDivElement>,
+  options: { capturePointer?: boolean } = {},
+): DragState {
+  if (options.capturePointer) event.currentTarget.setPointerCapture(event.pointerId);
+  return { x: rect.x, y: rect.y, startX: event.clientX, startY: event.clientY };
+}
+
+function beginWindowResize(
+  target: ResizeState["target"],
+  rect: Rect,
+  event: ReactPointerEvent<HTMLDivElement>,
+): ResizeState {
+  event.currentTarget.setPointerCapture(event.pointerId);
+  return { target, width: rect.width, height: rect.height, startX: event.clientX, startY: event.clientY };
+}
+
+function buildWindowStyle(rect: Rect) {
+  return {
+    left: rect.x,
+    top: rect.y,
+    width: rect.width,
+    height: rect.height,
+  } satisfies CSSProperties;
+}
+
+function closeSocket(socket: WebSocket | null) {
+  if (!socket || socket.readyState === WebSocket.CLOSED || socket.readyState === WebSocket.CLOSING) return;
+  socket.close();
+}
+
+function isSocketActive(socket: WebSocket | null) {
+  return socket !== null && socket.readyState !== WebSocket.CLOSED && socket.readyState !== WebSocket.CLOSING;
+}
+
+function snapShellHeightToRows(
+  host: HTMLDivElement,
+  terminal: Terminal,
+  setShell: (value: (current: ShellWindowState | null) => ShellWindowState | null) => void,
+) {
+  const cellHeight = getTerminalCellHeight(terminal);
+  if (!cellHeight || !terminal.element) return;
+
+  const terminalStyle = window.getComputedStyle(terminal.element);
+  const terminalPaddingY = cssNumber(terminalStyle, "padding-top") + cssNumber(terminalStyle, "padding-bottom");
+  const visibleHostHeight = host.getBoundingClientRect().height;
+  const targetHostHeight = Math.ceil((terminal.rows * cellHeight) + terminalPaddingY);
+  const delta = targetHostHeight - visibleHostHeight;
+  if (Math.abs(delta) < 1) return;
+
+  setShell((current) => current && !current.isMaximized ? {
+    ...current,
+    height: clamp(current.height + delta, MIN_WINDOW_HEIGHT, window.innerHeight - 24),
+  } : current);
+}
+
+function getTerminalCellHeight(terminal: Terminal) {
+  const dimensions = (terminal as unknown as {
+    _core?: { _renderService?: { dimensions?: { css?: { cell?: { height?: number } } } } };
+  })._core?._renderService?.dimensions;
+  const height = dimensions?.css?.cell?.height;
+  return typeof height === "number" && Number.isFinite(height) && height > 0 ? height : null;
+}
+
+function cssNumber(style: CSSStyleDeclaration, property: string) {
+  const value = Number.parseFloat(style.getPropertyValue(property));
+  return Number.isFinite(value) ? value : 0;
+}

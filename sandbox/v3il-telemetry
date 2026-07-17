@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+
+if [ "$#" -ne 1 ]; then
+    echo "usage: v3il-telemetry '<json-event>'" >&2
+    exit 2
+fi
+
+socket_path="${V3IL_TELEMETRY_SOCKET:-/run/v3il/telemetry.sock}"
+curl --fail --silent --show-error \
+    --unix-socket "$socket_path" \
+    --header 'Content-Type: application/json' \
+    --data-binary "$1" \
+    http://localhost/events

@@ -1,0 +1,538 @@
+import asyncio
+import json
+from http import HTTPStatus
+from typing import Never
+from urllib.parse import quote
+
+from fastapi import UploadFile, WebSocket, WebSocketDisconnect, status as ws_status
+from fastapi.responses import StreamingResponse
+from fastapi.websockets import WebSocketState
+
+from database import get_async_session
+from handler.common.http import raise_api_error
+from handler.common.websocket import (
+    authenticate_ws_token,
+    bounded_int,
+    cancel_ws_task as _cancel_task,
+    close_ws_silently as _close_silently,
+    finish_ws_reader_task,
+)
+from logger import get_logger
+from middleware.system_user import AuthUser, resolve_current_user
+from model.sandbox.containers import SandboxContainer
+from schema.common.responses import CommonResponse
+from schema.sandbox.containers import (
+    ContainerFileCopyRequest,
+    ContainerFileDeleteRequest,
+    ContainerFileMkdirRequest,
+    ContainerFileMoveRequest,
+    ContainerFileReadResponse,
+    ContainerFileUploadResponse,
+    ContainerFileType,
+    ContainerFileWriteRequest,
+    CreateSandboxContainerRequest,
+    DeleteSandboxContainerResponse,
+    ListContainerFilesResponse,
+    QuerySandboxContainerHostOptionsResponse,
+    QuerySandboxContainerImageOptionsResponse,
+    QuerySandboxContainersResponse,
+    SandboxContainerStatus,
+    UpdateSandboxContainerEgressRequest,
+)
+from schema.system_user.users import SystemUserRole
+from service.common.pagination import paginated_payload
+from service.sandbox.files import (
+    ContainerUploadSource,
+    copy_container_files,
+    create_container_directory,
+    delete_container_files,
+    download_container_paths,
+    get_container_file_info,
+    list_container_files,
+    move_container_files,
+    read_container_file,
+    resolve_file_container_status,
+    upload_container_files,
+    write_container_file,
+)
+from service.sandbox.lifecycle import (
+    SandboxContainerInUseError,
+    create_sandbox_container,
+    delete_sandbox_container,
+    pause_sandbox_container,
+    resume_sandbox_container,
+    start_sandbox_container,
+    stop_sandbox_container,
+    update_sandbox_container_egress,
+)
+from service.sandbox.records import (
+    query_available_sandbox_containers,
+    query_sandbox_container_host_options,
+    query_sandbox_container_image_options,
+    query_sandbox_containers,
+    sandbox_container_is_manageable_by_user,
+    sandbox_container_schema,
+)
+from service.sandbox.shell import (
+    ContainerShellSession,
+    open_container_shell,
+    read_container_shell,
+    resize_container_shell,
+    resolve_shell_container,
+    write_container_shell,
+)
+from service.sandbox.types import SandboxContainerMutationResult
+
+
+logger = get_logger(__name__)
+_SHELL_KEEPALIVE_INTERVAL_SECONDS = 25
+_WEBSOCKET_ACCESS_CHECK_INTERVAL_SECONDS = 30
+
+
+def _mutation_response(result: SandboxContainerMutationResult, user: AuthUser) -> CommonResponse:
+    if result.record is None:
+        status = HTTPStatus.NOT_FOUND if result.not_found else HTTPStatus.BAD_REQUEST
+        raise_api_error(status, result.message)
+    if not result.succeeded:
+        raise_api_error(HTTPStatus.BAD_REQUEST, result.message)
+    return CommonResponse(
+        message=result.message,
+        data=sandbox_container_schema(result.record, user_id=user.id, user_role=user.role),
+    )
+
+
+async def create_sandbox_container_handler(
+    request: CreateSandboxContainerRequest,
+    user: AuthUser,
+) -> CommonResponse:
+    if user.role != SystemUserRole.ADMIN and request.owner_id not in {None, user.id}:
+        raise_api_error(HTTPStatus.FORBIDDEN, "no permission to assign sandbox container owner")
+    owner_id = request.owner_id if user.role == SystemUserRole.ADMIN and request.owner_id is not None else user.id
+    result = await create_sandbox_container(
+        host_id=request.host_id,
+        image_id=request.image_id,
+        egress_mode=request.egress_mode,
+        egress_proxy_id=request.egress_proxy_id,
+        owner_id=owner_id,
+        port_mappings=request.port_mappings,
+    )
+    return _mutation_response(result, user)
+
+
+async def start_sandbox_container_handler(id: int, user: AuthUser) -> CommonResponse:
+    await _require_manage_permission(id, user)
+    return _mutation_response(await start_sandbox_container(id), user)
+
+
+async def stop_sandbox_container_handler(id: int, user: AuthUser) -> CommonResponse:
+    await _require_manage_permission(id, user)
+    return _mutation_response(await stop_sandbox_container(id), user)
+
+
+async def pause_sandbox_container_handler(id: int, user: AuthUser) -> CommonResponse:
+    await _require_manage_permission(id, user)
+    return _mutation_response(await pause_sandbox_container(id), user)
+
+
+async def resume_sandbox_container_handler(id: int, user: AuthUser) -> CommonResponse:
+    await _require_manage_permission(id, user)
+    return _mutation_response(await resume_sandbox_container(id), user)
+
+
+async def update_sandbox_container_egress_handler(
+    id: int,
+    request: UpdateSandboxContainerEgressRequest,
+    user: AuthUser,
+) -> CommonResponse:
+    await _require_manage_permission(id, user)
+    return _mutation_response(await update_sandbox_container_egress(
+        id,
+        egress_mode=request.egress_mode,
+        egress_proxy_id=request.egress_proxy_id,
+    ), user)
+
+
+async def delete_sandbox_container_handler(id: int, user: AuthUser) -> CommonResponse:
+    await _require_manage_permission(id, user)
+    try:
+        deleted = await delete_sandbox_container(id)
+    except SandboxContainerInUseError as exc:
+        raise_api_error(HTTPStatus.CONFLICT, str(exc))
+    if not deleted:
+        raise_api_error(HTTPStatus.NOT_FOUND, "sandbox container not found")
+    return CommonResponse(data=DeleteSandboxContainerResponse(id=id))
+
+
+async def query_sandbox_containers_handler(
+    page: int,
+    size: int,
+    keyword: str,
+    user_id: int,
+    user_role: SystemUserRole,
+) -> CommonResponse:
+    sandbox_containers = await query_sandbox_containers(
+        page=page,
+        size=size,
+        keyword=keyword,
+        user_id=user_id,
+        user_role=user_role,
+    )
+    return CommonResponse(data=QuerySandboxContainersResponse(
+        **paginated_payload(
+            sandbox_containers,
+            [
+                sandbox_container_schema(record, user_id=user_id, user_role=user_role)
+                for record in sandbox_containers.items
+            ],
+        ),
+    ))
+
+
+async def query_available_sandbox_containers_handler(
+    page: int,
+    size: int,
+    keyword: str,
+    user_id: int,
+    user_role: SystemUserRole,
+    include_non_running: bool = False,
+) -> CommonResponse:
+    sandbox_containers = await query_available_sandbox_containers(
+        page=page,
+        size=size,
+        keyword=keyword,
+        user_id=user_id,
+        user_role=user_role,
+        include_non_running=include_non_running,
+    )
+    return CommonResponse(data=QuerySandboxContainersResponse(
+        **paginated_payload(
+            sandbox_containers,
+            [
+                sandbox_container_schema(record, user_id=user_id, user_role=user_role)
+                for record in sandbox_containers.items
+            ],
+        ),
+    ))
+
+
+async def query_sandbox_container_host_options_handler(
+    page: int,
+    size: int,
+    keyword: str,
+) -> CommonResponse:
+    options = await query_sandbox_container_host_options(
+        page=page,
+        size=size,
+        keyword=keyword,
+    )
+    return CommonResponse(data=QuerySandboxContainerHostOptionsResponse(
+        **paginated_payload(options, options.items),
+    ))
+
+
+async def query_sandbox_container_image_options_handler(
+    page: int,
+    size: int,
+    keyword: str,
+) -> CommonResponse:
+    options = await query_sandbox_container_image_options(
+        page=page,
+        size=size,
+        keyword=keyword,
+    )
+    return CommonResponse(data=QuerySandboxContainerImageOptionsResponse(
+        **paginated_payload(options, options.items),
+    ))
+
+
+async def _require_manage_permission(id: int, user: AuthUser) -> None:
+    manageable = await sandbox_container_is_manageable_by_user(
+        id=id,
+        user_id=user.id,
+        user_role=user.role,
+    )
+    if manageable is None:
+        raise_api_error(HTTPStatus.NOT_FOUND, "sandbox container not found")
+    if not manageable:
+        raise_api_error(HTTPStatus.FORBIDDEN, "no permission to operate this sandbox container")
+
+
+async def handle_container_shell_stream(websocket: WebSocket, id: int, token: str) -> None:
+    user = await authenticate_ws_token(token)
+    if user is None:
+        await websocket.close(code=ws_status.WS_1008_POLICY_VIOLATION)
+        return
+
+    if not await _can_access_container_by_id(user, id):
+        await websocket.close(code=ws_status.WS_1008_POLICY_VIOLATION)
+        return
+
+    sandbox_container = await resolve_shell_container(id)
+    if sandbox_container is None:
+        await websocket.close(code=ws_status.WS_1008_POLICY_VIOLATION)
+        return
+
+    await websocket.accept()
+    shell: ContainerShellSession | None = None
+    reader: asyncio.Task | None = None
+    receiver: asyncio.Task | None = None
+    keepalive: asyncio.Task | None = None
+    send_lock = asyncio.Lock()
+
+    try:
+        shell = await open_container_shell(id)
+        reader = asyncio.create_task(_forward_shell_output(websocket, shell, send_lock))
+        keepalive = asyncio.create_task(_send_shell_keepalive(websocket, send_lock))
+
+        while True:
+            if receiver is None:
+                receiver = asyncio.create_task(websocket.receive_text())
+            done, _ = await asyncio.wait(
+                {receiver, reader},
+                return_when=asyncio.FIRST_COMPLETED,
+                timeout=_WEBSOCKET_ACCESS_CHECK_INTERVAL_SECONDS,
+            )
+            if not done:
+                current_user = await resolve_current_user(user)
+                if current_user is None or not await _can_access_container_by_id(current_user, id):
+                    await _close_silently(websocket, ws_status.WS_1008_POLICY_VIOLATION)
+                    return
+                user = current_user
+                continue
+            if reader in done:
+                await reader
+                await _close_silently(websocket, ws_status.WS_1000_NORMAL_CLOSURE)
+                return
+
+            message = receiver.result()
+            receiver = None
+            try:
+                payload = json.loads(message)
+            except json.JSONDecodeError:
+                await write_container_shell(shell, message)
+                continue
+
+            if not isinstance(payload, dict):
+                continue
+            message_type = payload.get("type")
+            if message_type == "input":
+                await write_container_shell(shell, str(payload.get("data", "")))
+            elif message_type == "resize":
+                rows = bounded_int(payload.get("rows"), default=24, minimum=1, maximum=300)
+                cols = bounded_int(payload.get("cols"), default=80, minimum=1, maximum=500)
+                await resize_container_shell(shell, rows=rows, cols=cols)
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        logger.exception("container shell stream failed: %s", id)
+        await _close_silently(websocket)
+    finally:
+        try:
+            if shell is not None:
+                shell.shutdown()
+            await _cancel_task(receiver)
+            await _cancel_task(keepalive)
+            await finish_ws_reader_task(reader)
+        finally:
+            if shell is not None:
+                await shell.close()
+
+
+async def _forward_shell_output(
+    websocket: WebSocket,
+    shell: ContainerShellSession,
+    send_lock: asyncio.Lock,
+) -> None:
+    while True:
+        data = await read_container_shell(shell)
+        if not data:
+            return
+        if (
+            websocket.client_state != WebSocketState.CONNECTED
+            or websocket.application_state != WebSocketState.CONNECTED
+        ):
+            return
+        async with send_lock:
+            await websocket.send_bytes(data)
+
+
+async def _send_shell_keepalive(websocket: WebSocket, send_lock: asyncio.Lock) -> None:
+    while True:
+        await asyncio.sleep(_SHELL_KEEPALIVE_INTERVAL_SECONDS)
+        if (
+            websocket.client_state != WebSocketState.CONNECTED
+            or websocket.application_state != WebSocketState.CONNECTED
+        ):
+            return
+        try:
+            async with send_lock:
+                await websocket.send_bytes(b"")
+        except (WebSocketDisconnect, RuntimeError, OSError):
+            return
+
+
+async def _can_access_container_by_id(user, container_id: int) -> bool:
+    if user.role == SystemUserRole.ADMIN:
+        return True
+    async with get_async_session() as session:
+        container = await session.get(SandboxContainer, container_id)
+        return container is not None and container.owner_id == user.id
+
+
+# Container file manager handlers
+
+
+async def _require_running_container_access(id: int, action: str, user=None) -> None:
+    if user is not None and not await _can_access_container_by_id(user, id):
+        raise_api_error(HTTPStatus.FORBIDDEN, "no permission to access this sandbox container")
+    status = await resolve_file_container_status(id)
+    if status is None:
+        raise_api_error(HTTPStatus.NOT_FOUND, "sandbox container not found")
+    if status != SandboxContainerStatus.RUNNING:
+        raise_api_error(HTTPStatus.BAD_REQUEST, f"only running sandbox containers can {action}")
+
+
+async def handle_list_files(id: int, path: str, user=None) -> CommonResponse:
+    await _require_running_container_access(id, "browse files", user=user)
+    try:
+        files = await list_container_files(id, path)
+    except Exception as exc:
+        _raise_container_file_operation_error(exc, id, "list container files")
+    return CommonResponse(data=ListContainerFilesResponse(path=path, files=files))
+
+
+async def handle_read_file(id: int, path: str, base64_mode: bool = False, user=None) -> CommonResponse:
+    await _require_running_container_access(id, "read files", user=user)
+    try:
+        info = await get_container_file_info(id, path)
+    except Exception as exc:
+        _raise_container_file_operation_error(exc, id, "get container file info")
+    if info is None:
+        raise_api_error(HTTPStatus.NOT_FOUND, "file not found")
+    if info.type == ContainerFileType.DIRECTORY:
+        raise_api_error(HTTPStatus.BAD_REQUEST, "cannot read a directory")
+    try:
+        content = await read_container_file(id, path, base64_mode=base64_mode)
+    except Exception as exc:
+        _raise_container_file_operation_error(exc, id, "read container file")
+    return CommonResponse(data=ContainerFileReadResponse(
+        path=path,
+        content=content,
+        size=info.size,
+    ))
+
+
+async def handle_write_file(id: int, body: ContainerFileWriteRequest, user=None) -> CommonResponse:
+    await _require_running_container_access(id, "write files", user=user)
+    try:
+        ok = await write_container_file(id, body.path, body.content)
+    except Exception as exc:
+        _raise_container_file_operation_error(exc, id, "write container file")
+    if not ok:
+        raise_api_error(HTTPStatus.INTERNAL_SERVER_ERROR, "failed to write container file")
+    return CommonResponse(message="file written")
+
+
+async def handle_upload_files(
+    id: int,
+    path: str,
+    files: list[UploadFile],
+    overwrite: bool,
+    user=None,
+) -> CommonResponse:
+    await _require_running_container_access(id, "upload files", user=user)
+    if not files:
+        raise_api_error(HTTPStatus.BAD_REQUEST, "no files uploaded")
+
+    try:
+        sources = [ContainerUploadSource(filename=file.filename or "", stream=file.file) for file in files]
+        uploaded = await upload_container_files(id, path, sources, overwrite)
+    except Exception as exc:
+        _raise_container_file_operation_error(exc, id, "upload container files")
+
+    return CommonResponse(
+        data=ContainerFileUploadResponse(path=path, files=uploaded),
+        message="files uploaded",
+    )
+
+
+async def handle_download_files(id: int, paths: list[str], user=None) -> StreamingResponse:
+    await _require_running_container_access(id, "download files", user=user)
+    if not paths:
+        raise_api_error(HTTPStatus.BAD_REQUEST, "download path is required")
+
+    try:
+        download = await download_container_paths(id, paths)
+    except Exception as exc:
+        _raise_container_file_operation_error(exc, id, "download container files")
+
+    filename = download.filename.replace('"', "_")
+    encoded_filename = quote(download.filename)
+    return StreamingResponse(
+        download.chunks,
+        media_type=download.media_type,
+        headers={
+            "Content-Disposition": f"attachment; filename=\"{filename}\"; filename*=UTF-8''{encoded_filename}",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+async def handle_copy_files(id: int, body: ContainerFileCopyRequest, user=None) -> CommonResponse:
+    await _require_running_container_access(id, "copy files", user=user)
+    try:
+        ok = await copy_container_files(id, body.sources, body.destination)
+    except Exception as exc:
+        _raise_container_file_operation_error(exc, id, "copy container files")
+    if not ok:
+        raise_api_error(HTTPStatus.INTERNAL_SERVER_ERROR, "failed to copy container files")
+    return CommonResponse(message="files copied")
+
+
+async def handle_move_files(id: int, body: ContainerFileMoveRequest, user=None) -> CommonResponse:
+    await _require_running_container_access(id, "move files", user=user)
+    try:
+        ok = await move_container_files(id, body.sources, body.destination)
+    except Exception as exc:
+        _raise_container_file_operation_error(exc, id, "move container files")
+    if not ok:
+        raise_api_error(HTTPStatus.INTERNAL_SERVER_ERROR, "failed to move container files")
+    return CommonResponse(message="files moved")
+
+
+async def handle_delete_files(id: int, body: ContainerFileDeleteRequest, user=None) -> CommonResponse:
+    await _require_running_container_access(id, "delete files", user=user)
+    try:
+        ok = await delete_container_files(id, body.paths)
+    except Exception as exc:
+        _raise_container_file_operation_error(exc, id, "delete container files")
+    if not ok:
+        raise_api_error(HTTPStatus.INTERNAL_SERVER_ERROR, "failed to delete container files")
+    return CommonResponse(message="files deleted")
+
+
+async def handle_mkdir(id: int, body: ContainerFileMkdirRequest, user=None) -> CommonResponse:
+    await _require_running_container_access(id, "create directories", user=user)
+    try:
+        ok = await create_container_directory(id, body.path)
+    except Exception as exc:
+        _raise_container_file_operation_error(exc, id, "create container directory")
+    if not ok:
+        raise_api_error(HTTPStatus.INTERNAL_SERVER_ERROR, "failed to create container directory")
+    return CommonResponse(message="directory created")
+
+
+def _raise_container_file_operation_error(error: Exception, container_id: int, operation: str) -> Never:
+    message = str(error).strip()
+    if isinstance(error, FileNotFoundError):
+        raise_api_error(HTTPStatus.NOT_FOUND, message or "path not found")
+    if isinstance(error, FileExistsError):
+        raise_api_error(HTTPStatus.CONFLICT, message or "path already exists")
+    if isinstance(error, ValueError):
+        raise_api_error(HTTPStatus.BAD_REQUEST, message or f"failed to {operation}")
+    if isinstance(error, (RuntimeError, OSError)):
+        logger.warning("sandbox control proxy operation failed: container=%s operation=%s", container_id, operation)
+        raise_api_error(HTTPStatus.BAD_GATEWAY, f"failed to {operation}")
+    logger.exception("failed to %s: %s", operation, container_id)
+    raise_api_error(HTTPStatus.INTERNAL_SERVER_ERROR, f"failed to {operation}")
+

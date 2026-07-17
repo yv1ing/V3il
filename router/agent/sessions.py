@@ -1,0 +1,227 @@
+from fastapi import APIRouter, Depends, Path, Query, WebSocket
+from fastapi.responses import FileResponse
+
+from handler.agent.sessions import (
+    cancel_agent_session_tasks_handler,
+    create_agent_session_turn_handler,
+    delete_agent_session_handler,
+    download_agent_report_handler,
+    handle_agent_stream,
+    interrupt_agent_session_handler,
+    list_agent_events_handler,
+    list_agent_sessions_handler,
+    submit_agent_session_turn_handler,
+    update_agent_session_sandbox_container_handler,
+    update_agent_session_title_handler,
+)
+from middleware.system_user import AuthUser, require_user
+from router.common.responses import COMMON_ERROR_RESPONSES, not_found_response
+from schema.agent.sessions import (
+    AgentSessionSummarySchema,
+    AgentTurnRequest,
+    AgentTurnResponse,
+    ListAgentEventsResponse,
+    ListAgentSessionsResponse,
+    UpdateAgentSessionSandboxContainerRequest,
+    UpdateAgentSessionTitleRequest,
+)
+from schema.common.responses import CommonResponse
+from service.common.pagination import RESOURCE_PAGE_MAX_SIZE, RESOURCE_PAGE_SIZE
+
+
+# the websocket route does its own token check because browsers cannot attach
+# custom auth headers to native WebSocket upgrades, so http auth is added per-route here
+# rather than at router scope
+router = APIRouter(prefix="/agent-sessions", tags=["agent-sessions"])
+
+
+async def list_agent_sessions_route(
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=RESOURCE_PAGE_SIZE, ge=1, le=RESOURCE_PAGE_MAX_SIZE),
+    include_scoped: bool = Query(default=False),
+    user: AuthUser = Depends(require_user),
+) -> CommonResponse[ListAgentSessionsResponse]:
+    return await list_agent_sessions_handler(
+        page=page,
+        size=size,
+        include_scoped=include_scoped,
+        user=user,
+    )
+
+
+async def create_agent_session_turn_route(
+    request: AgentTurnRequest,
+    user: AuthUser = Depends(require_user),
+) -> CommonResponse[AgentTurnResponse]:
+    return await create_agent_session_turn_handler(request=request, user=user)
+
+
+async def submit_agent_session_turn_route(
+    session_id: str,
+    request: AgentTurnRequest,
+    user: AuthUser = Depends(require_user),
+) -> CommonResponse[AgentTurnResponse]:
+    return await submit_agent_session_turn_handler(
+        session_id=session_id,
+        request=request,
+        user=user,
+    )
+
+
+async def interrupt_agent_session_route(
+    session_id: str,
+    user: AuthUser = Depends(require_user),
+) -> CommonResponse[AgentTurnResponse]:
+    return await interrupt_agent_session_handler(session_id=session_id, user=user)
+
+
+async def cancel_agent_session_tasks_route(
+    session_id: str,
+    user: AuthUser = Depends(require_user),
+) -> CommonResponse[AgentTurnResponse]:
+    return await cancel_agent_session_tasks_handler(session_id=session_id, user=user)
+
+
+async def delete_agent_session_route(
+    session_id: str,
+    user: AuthUser = Depends(require_user),
+) -> CommonResponse:
+    return await delete_agent_session_handler(session_id=session_id, user=user)
+
+
+async def update_agent_session_title_route(
+    session_id: str,
+    request: UpdateAgentSessionTitleRequest,
+    user: AuthUser = Depends(require_user),
+) -> CommonResponse:
+    return await update_agent_session_title_handler(session_id=session_id, request=request, user=user)
+
+
+async def update_agent_session_sandbox_container_route(
+    session_id: str,
+    request: UpdateAgentSessionSandboxContainerRequest,
+    user: AuthUser = Depends(require_user),
+) -> CommonResponse:
+    return await update_agent_session_sandbox_container_handler(session_id=session_id, request=request, user=user)
+
+
+async def list_agent_events_route(
+    session_id: str,
+    before_seq: int | None = Query(default=None, ge=1),
+    limit: int = Query(default=80, ge=1, le=200),
+    user: AuthUser = Depends(require_user),
+) -> CommonResponse[ListAgentEventsResponse]:
+    return await list_agent_events_handler(
+        session_id=session_id,
+        user=user,
+        before_seq=before_seq,
+        limit=limit,
+    )
+
+
+async def download_agent_report_route(
+    report_id: str = Path(min_length=1),
+    user: AuthUser = Depends(require_user),
+):
+    return await download_agent_report_handler(report_id=report_id, user=user)
+
+
+router.add_api_route(
+    "",
+    list_agent_sessions_route,
+    methods=["GET"],
+    response_model=CommonResponse[ListAgentSessionsResponse],
+    responses=COMMON_ERROR_RESPONSES,
+)
+
+router.add_api_route(
+    "/{session_id}/events",
+    list_agent_events_route,
+    methods=["GET"],
+    response_model=CommonResponse[ListAgentEventsResponse],
+    responses=COMMON_ERROR_RESPONSES,
+)
+
+router.add_api_route(
+    "/reports/{report_id}/download",
+    download_agent_report_route,
+    methods=["GET"],
+    response_model=None,
+    response_class=FileResponse,
+    responses={
+        **COMMON_ERROR_RESPONSES,
+        200: {
+            "description": "Markdown report file",
+            "content": {
+                "text/markdown": {"schema": {"type": "string", "format": "binary"}},
+            },
+        },
+        400: {"description": "Bad Request"},
+        404: {"description": "Report file not found"},
+    },
+)
+
+router.add_api_route(
+    "/turns",
+    create_agent_session_turn_route,
+    methods=["POST"],
+    response_model=CommonResponse[AgentTurnResponse],
+    responses=COMMON_ERROR_RESPONSES,
+)
+
+router.add_api_route(
+    "/{session_id}/turns",
+    submit_agent_session_turn_route,
+    methods=["POST"],
+    response_model=CommonResponse[AgentTurnResponse],
+    responses={**COMMON_ERROR_RESPONSES, **not_found_response("Agent session")},
+)
+
+router.add_api_route(
+    "/{session_id}/interrupt",
+    interrupt_agent_session_route,
+    methods=["POST"],
+    response_model=CommonResponse[AgentTurnResponse],
+    responses={**COMMON_ERROR_RESPONSES, **not_found_response("Agent session")},
+)
+
+router.add_api_route(
+    "/{session_id}/cancel-all",
+    cancel_agent_session_tasks_route,
+    methods=["POST"],
+    response_model=CommonResponse[AgentTurnResponse],
+    responses={**COMMON_ERROR_RESPONSES, **not_found_response("Agent session")},
+)
+
+router.add_api_route(
+    "/{session_id}/title",
+    update_agent_session_title_route,
+    methods=["PATCH"],
+    response_model=CommonResponse[AgentSessionSummarySchema],
+    responses={**COMMON_ERROR_RESPONSES, **not_found_response("Agent session")},
+)
+
+router.add_api_route(
+    "/{session_id}/sandbox-container",
+    update_agent_session_sandbox_container_route,
+    methods=["PATCH"],
+    response_model=CommonResponse[AgentSessionSummarySchema],
+    responses={**COMMON_ERROR_RESPONSES, **not_found_response("Agent session")},
+)
+
+router.add_api_route(
+    "/{session_id}",
+    delete_agent_session_route,
+    methods=["DELETE"],
+    response_model=CommonResponse,
+    responses={**COMMON_ERROR_RESPONSES, **not_found_response("Agent session")},
+)
+
+
+@router.websocket("/{session_id}/stream")
+async def agent_session_stream(
+    websocket: WebSocket,
+    session_id: str,
+    token: str = Query(default=""),
+) -> None:
+    await handle_agent_stream(websocket=websocket, session_id=session_id, token=token)
