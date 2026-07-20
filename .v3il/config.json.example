@@ -15,7 +15,7 @@
         "port": 5432,
         "database": "v3il",
         "username": "root",
-        "password": "replace-with-a-strong-database-password",
+        "password": "123456",
         "pool_size": 32,
         "max_overflow": 32,
         "pool_timeout_seconds": 30,
@@ -69,8 +69,8 @@
             "name": "V3il",
             "description": "Chief Security Officer",
             "base_url": "https://api.openai.com/v1",
-            "api_key": "",
-            "model": "gpt-5",
+            "api_key": "sk-3844...",
+            "model": "gpt-5.5",
             "use_responses": false,
             "context_window": 400000
         },
@@ -79,8 +79,8 @@
             "name": "H4wk",
             "description": "Threat Investigation Engineer",
             "base_url": "https://api.openai.com/v1",
-            "api_key": "",
-            "model": "gpt-5",
+            "api_key": "sk-3844...",
+            "model": "gpt-5.5",
             "use_responses": false,
             "context_window": 400000
         },
@@ -89,8 +89,8 @@
             "name": "Ph4ntom",
             "description": "Deception Defense Engineer",
             "base_url": "https://api.openai.com/v1",
-            "api_key": "",
-            "model": "gpt-5",
+            "api_key": "sk-3844...",
+            "model": "gpt-5.5",
             "use_responses": false,
             "context_window": 400000
         },
@@ -99,8 +99,8 @@
             "name": "L1ly",
             "description": "Cyber Threat Intelligence Engineer",
             "base_url": "https://api.openai.com/v1",
-            "api_key": "",
-            "model": "gpt-5",
+            "api_key": "sk-3844...",
+            "model": "gpt-5.5",
             "use_responses": false,
             "context_window": 400000
         },
@@ -109,8 +109,8 @@
             "name": "J4ck",
             "description": "Security Response Engineer",
             "base_url": "https://api.openai.com/v1",
-            "api_key": "",
-            "model": "gpt-5",
+            "api_key": "sk-3844...",
+            "model": "gpt-5.5",
             "use_responses": false,
             "context_window": 400000
         }
