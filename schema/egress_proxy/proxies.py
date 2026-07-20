@@ -5,6 +5,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from schema.common.responses import PaginatedResponse
+from schema.common.resources import ResourceLifecycleStatus
 
 
 class EgressProxyType(StrEnum):
@@ -17,6 +18,7 @@ class EgressProxySchema(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    status: ResourceLifecycleStatus
     proxy_type: EgressProxyType
     proxy_host: str
     proxy_port: int
@@ -24,6 +26,7 @@ class EgressProxySchema(BaseModel):
     proxy_password: str
     created_at: datetime
     updated_at: datetime
+    retired_at: datetime | None
 
 
 class CreateEgressProxyRequest(BaseModel):
@@ -71,7 +74,7 @@ class UpdateEgressProxyRequest(BaseModel):
         return self
 
 
-class DeleteEgressProxyResponse(BaseModel):
+class RetireEgressProxyResponse(BaseModel):
     id: int
 
 

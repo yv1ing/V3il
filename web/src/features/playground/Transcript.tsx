@@ -1,20 +1,9 @@
-import { AlertOctagon, Brain, ChevronDown, ChevronRight, Download, FileText } from "lucide-react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type {
-  AgentTranscript,
-  ErrorItem,
-  ReportAttachmentItem,
-  ThinkingItem,
-  TranscriptAttachmentItem,
-} from "./chatState";
-import { downloadAgentReport } from "../../shared/api/agentSessions";
-import { showApiError } from "../../shared/api/feedback";
+import { AlertOctagon, Brain, ChevronDown, ChevronRight } from "lucide-react";
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import type { AgentTranscript, ErrorItem, ThinkingItem } from "./transcriptTypes";
 import { MarkdownContent } from "../../shared/components/MarkdownContent";
 import { normalizeMarkdownForRender } from "./markdown";
-import type { SubagentSelection } from "./subagentView";
 import { cx } from "../../shared/lib/className";
-import { saveBlob } from "../../shared/lib/download";
-import { formatBytes } from "../../shared/lib/number";
 import { ToolGroup } from "./TranscriptExecutions";
 import {
   activeTextItemId,
@@ -30,23 +19,16 @@ export function TranscriptContent({
   live,
   emptyText,
   pendingEmpty = false,
-  allowSubagentOpen = true,
-  selectedSubagent,
-  onOpenSubagent,
 }: {
   transcript: AgentTranscript;
   live: boolean;
   emptyText?: string;
   pendingEmpty?: boolean;
-  allowSubagentOpen?: boolean;
-  selectedSubagent?: SubagentSelection | null;
-  onOpenSubagent?: (selection: SubagentSelection) => void;
 }) {
   const isEmpty = isTranscriptEmpty(transcript);
   const activeTextId = live ? activeTextItemId(transcript.blocks) : "";
   const activeThinkingId = live ? activeThinkingItemId(transcript.blocks) : "";
   const segments = useMemo(() => buildTranscriptSegments(transcript.blocks), [transcript.blocks]);
-  const attachments = transcript.attachments ?? [];
 
   return (
     <div className="transcript-body">
@@ -58,12 +40,8 @@ export function TranscriptContent({
           live={live}
           activeTextId={activeTextId}
           activeThinkingId={activeThinkingId}
-          allowSubagentOpen={allowSubagentOpen}
-          selectedSubagent={selectedSubagent}
-          onOpenSubagent={onOpenSubagent}
         />
       ))}
-      {attachments.length ? <TranscriptAttachments attachments={attachments} /> : null}
       {live && !isEmpty ? <span className="caret" /> : null}
       {isEmpty && emptyText ? <div className="transcript-empty">{emptyText}</div> : null}
     </div>
@@ -75,17 +53,11 @@ function TranscriptSegmentView({
   live,
   activeTextId,
   activeThinkingId,
-  allowSubagentOpen,
-  selectedSubagent,
-  onOpenSubagent,
 }: {
   segment: TranscriptRenderSegment;
   live: boolean;
   activeTextId: string;
   activeThinkingId: string;
-  allowSubagentOpen: boolean;
-  selectedSubagent?: SubagentSelection | null;
-  onOpenSubagent?: (selection: SubagentSelection) => void;
 }) {
   if (segment.kind === "thinking") {
     return (
@@ -98,16 +70,7 @@ function TranscriptSegmentView({
     );
   }
   if (segment.kind === "tools") {
-    return (
-      <ToolGroup
-        items={segment.items}
-        live={live}
-        selectedSubagent={selectedSubagent}
-        onOpenSubagent={onOpenSubagent}
-        allowSubagentOpen={allowSubagentOpen}
-        header={(props) => <PanelHeader {...props} />}
-      />
-    );
+    return <ToolGroup items={segment.items} live={live} header={(props) => <PanelHeader {...props} />} />;
   }
   return (
     <ContentBlockView
@@ -118,12 +81,8 @@ function TranscriptSegmentView({
 }
 
 function ContentBlockView({ block, streaming }: { block: ContentBlock; streaming: boolean }) {
-  switch (block.kind) {
-    case "text":
-      return <MarkdownText text={block.text} streaming={streaming} />;
-    case "error":
-      return <ErrorNotice item={block} />;
-  }
+  if (block.kind === "text") return <MarkdownText text={block.text} streaming={streaming} />;
+  return <ErrorNotice item={block} />;
 }
 
 const STREAM_RENDER_INTERVAL_MS = 80;
@@ -131,7 +90,6 @@ const STREAM_RENDER_INTERVAL_MS = 80;
 const MarkdownText = memo(function MarkdownText({ text, streaming }: { text: string; streaming: boolean }) {
   const [renderText, setRenderText] = useState(text);
   const latestTextRef = useRef(text);
-
   latestTextRef.current = text;
 
   useEffect(() => {
@@ -139,11 +97,9 @@ const MarkdownText = memo(function MarkdownText({ text, streaming }: { text: str
       setRenderText(text);
       return;
     }
-    const timer = setInterval(() => {
-      setRenderText(latestTextRef.current);
-    }, STREAM_RENDER_INTERVAL_MS);
+    const timer = window.setInterval(() => setRenderText(latestTextRef.current), STREAM_RENDER_INTERVAL_MS);
     return () => {
-      clearInterval(timer);
+      window.clearInterval(timer);
       setRenderText(latestTextRef.current);
     };
   }, [streaming, text === ""]);
@@ -152,10 +108,7 @@ const MarkdownText = memo(function MarkdownText({ text, streaming }: { text: str
     if (!streaming) setRenderText(text);
   }, [streaming, text]);
 
-  const markdown = useMemo(
-    () => normalizeMarkdownForRender(renderText, streaming),
-    [renderText, streaming],
-  );
+  const markdown = useMemo(() => normalizeMarkdownForRender(renderText, streaming), [renderText, streaming]);
   if (!renderText && !streaming) return null;
   return <MarkdownContent className="agent-text" content={markdown} mode="document" mermaid />;
 });
@@ -174,24 +127,16 @@ function ThinkingGroup({
   const [open, setOpen] = useState(active);
   const wasActive = useRef(active);
   const bodyRef = useRef<HTMLPreElement | null>(null);
-  const text = useMemo(
-    () => items.map((item) => item.text.trim()).filter(Boolean).join("\n\n"),
-    [items],
-  );
+  const text = useMemo(() => items.map((item) => item.text.trim()).filter(Boolean).join("\n\n"), [items]);
 
   useEffect(() => {
-    if (active) {
-      setOpen(true);
-    } else if (wasActive.current) {
-      setOpen(false);
-    }
+    if (active) setOpen(true);
+    else if (wasActive.current) setOpen(false);
     wasActive.current = active;
   }, [active]);
 
   useEffect(() => {
-    if (open && bodyRef.current) {
-      bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
-    }
+    if (open && bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
   }, [text, open]);
 
   return (
@@ -206,9 +151,7 @@ function ThinkingGroup({
       {open ? (
         <div className="thinking-body">
           <div className="thinking-fade thinking-fade-top" />
-          <pre ref={bodyRef} className="thinking-text">
-            {text || (activeItemId ? " " : "(empty)")}
-          </pre>
+          <pre ref={bodyRef} className="thinking-text">{text || (activeItemId ? " " : "(empty)")}</pre>
           <div className="thinking-fade thinking-fade-bottom" />
         </div>
       ) : null}
@@ -234,123 +177,18 @@ function PanelHeader({
       {icon}
       <span>{title}</span>
       {count ? <span className="transcript-panel-count">{count}</span> : null}
-      <span className="transcript-panel-toggle">
-        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-      </span>
+      <span className="transcript-panel-toggle">{open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}</span>
     </button>
   );
 }
 
 function ErrorNotice({ item }: { item: ErrorItem }) {
-  return (
-    <div className="agent-error">
-      <AlertOctagon size={16} />
-      <span>{item.message}</span>
-    </div>
-  );
-}
-
-type TranscriptAttachmentRenderContext = {
-  downloadingReportId: string;
-  onDownloadReport: (report: ReportAttachmentItem) => void;
-};
-
-const TRANSCRIPT_ATTACHMENT_RENDERERS: {
-  [Kind in TranscriptAttachmentItem["kind"]]: (
-    attachment: Extract<TranscriptAttachmentItem, { kind: Kind }>,
-    context: TranscriptAttachmentRenderContext,
-  ) => ReactNode;
-} = {
-  report: (attachment, context) => (
-    <ReportAttachment
-      report={attachment}
-      disabled={Boolean(context.downloadingReportId)}
-      onDownload={() => context.onDownloadReport(attachment)}
-    />
-  ),
-};
-
-function TranscriptAttachments({ attachments }: { attachments: TranscriptAttachmentItem[] }) {
-  const [downloadingReportId, setDownloadingReportId] = useState("");
-  const downloadReport = useCallback(async (report: ReportAttachmentItem) => {
-    if (downloadingReportId) return;
-    setDownloadingReportId(report.reportId);
-    try {
-      const { blob, filename } = await downloadAgentReport(report.reportId);
-      saveBlob(blob, filename || report.filename);
-    } catch (error) {
-      showApiError(error);
-    } finally {
-      setDownloadingReportId((current) => (current === report.reportId ? "" : current));
-    }
-  }, [downloadingReportId]);
-  const context = useMemo(
-    () => ({ downloadingReportId, onDownloadReport: downloadReport }),
-    [downloadReport, downloadingReportId],
-  );
-
-  return (
-    <div className="transcript-attachments">
-      {attachments.map((attachment) => (
-        <TranscriptAttachment
-          key={attachment.id}
-          attachment={attachment}
-          context={context}
-        />
-      ))}
-    </div>
-  );
-}
-
-function TranscriptAttachment({
-  attachment,
-  context,
-}: {
-  attachment: TranscriptAttachmentItem;
-  context: TranscriptAttachmentRenderContext;
-}) {
-  const render = TRANSCRIPT_ATTACHMENT_RENDERERS[attachment.kind] as (
-    attachment: TranscriptAttachmentItem,
-    context: TranscriptAttachmentRenderContext,
-  ) => ReactNode;
-  return render(attachment, context);
-}
-
-function ReportAttachment({
-  report,
-  disabled,
-  onDownload,
-}: {
-  report: ReportAttachmentItem;
-  disabled: boolean;
-  onDownload: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      className="report-attachment"
-      disabled={disabled}
-      title={`${report.filename} · ${formatBytes(report.size)}`}
-      aria-label={`Download ${report.filename}`}
-      onClick={onDownload}
-    >
-      <span className="report-attachment-icon">
-        <FileText size={18} />
-      </span>
-      <span className="report-attachment-main">
-        <span className="report-attachment-name">{report.filename}</span>
-        <span className="report-attachment-size">{formatBytes(report.size)}</span>
-      </span>
-      <span className="report-attachment-download">
-        <Download size={14} />
-      </span>
-    </button>
-  );
+  return <div className="agent-error"><AlertOctagon size={16} /><span>{item.message}</span></div>;
 }
 
 function PendingShimmer() {
   return (
-    <div className="agent-pending">
+    <div className="pending-shimmer" aria-label="Agent is working">
       <span /><span /><span />
     </div>
   );

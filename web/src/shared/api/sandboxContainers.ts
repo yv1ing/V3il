@@ -15,7 +15,6 @@ import type {
   ContainerFileWriteResponse,
   CreateSandboxContainerRequest,
   CreateSandboxContainerResponse,
-  DeleteSandboxContainerResponse,
   ListContainerFilesParams,
   ListContainerFilesResponse,
   DownloadContainerFilesParams,
@@ -29,6 +28,7 @@ import type {
   QuerySandboxContainerImageOptionsResponse,
   QuerySandboxContainersParams,
   QuerySandboxContainersResponse,
+  RemoveSandboxContainerResponse,
   ReadContainerFileParams,
   ReadContainerFileResponse,
   ResumeSandboxContainerPathParams,
@@ -78,8 +78,8 @@ export const updateSandboxContainerEgress = defineJsonEndpoint<
   [id: UpdateSandboxContainerEgressPathParams["id"], payload: UpdateSandboxContainerEgressRequest],
   UpdateSandboxContainerEgressResponse
 >("PATCH", (id) => `${SANDBOX_CONTAINERS_PATH}/${id}/egress`, (_, payload) => payload);
-export const deleteSandboxContainer = defineJsonEndpoint<[id: SandboxContainerId], DeleteSandboxContainerResponse>(
-  "DELETE", (id) => `${SANDBOX_CONTAINERS_PATH}/${id}`,
+export const removeSandboxContainer = defineJsonEndpoint<[id: SandboxContainerId], RemoveSandboxContainerResponse>(
+  "POST", (id) => `${SANDBOX_CONTAINERS_PATH}/${id}/remove`,
 );
 
 export function buildContainerShellUrl(containerId: SandboxContainerId) {

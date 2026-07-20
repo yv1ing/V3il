@@ -18,7 +18,12 @@ from model.threat.behaviors import BehaviorEvent, ThreatIncidentBehaviorEvent
 from model.threat.chains import AttackChain
 from model.threat.incidents import ThreatIncident, ThreatIncidentEnvironment
 from model.threat.intelligence import IntelligenceReport, ThreatIndicator
-from model.threat.investigations import InvestigationEvidence, InvestigationTask, InvestigationTaskEvent
+from model.threat.investigations import (
+    EvidenceBehaviorLink,
+    InvestigationEvidence,
+    InvestigationTask,
+    InvestigationTaskEvent,
+)
 from schema.threat.analysis import AnalysisKind
 from schema.threat.investigations import InvestigationTaskStatus
 from service.threat.analysis import (
@@ -93,6 +98,15 @@ async def build_investigation_context(context: AgentRuntimeContext) -> dict[str,
         task_event_rows = list((await session.exec(select(InvestigationTaskEvent).join(
             InvestigationTask, InvestigationTask.id == InvestigationTaskEvent.task_id
         ).where(InvestigationTask.incident_id == incident_id))).all())
+        evidence_link_rows = list((await session.exec(
+            select(EvidenceBehaviorLink)
+            .join(
+                InvestigationEvidence,
+                InvestigationEvidence.id == EvidenceBehaviorLink.evidence_id,
+            )
+            .join(InvestigationTask, InvestigationTask.id == InvestigationEvidence.task_id)
+            .where(InvestigationTask.incident_id == incident_id)
+        )).all())
         scoped_ids = [row.event_id for row in task_event_rows if current_task is not None and row.task_id == current_task.id]
         event_statement = (
             select(BehaviorEvent)
@@ -182,9 +196,7 @@ async def build_investigation_context(context: AgentRuntimeContext) -> dict[str,
             "behavior_evidence_coverage": {
                 "assigned_count": assigned_count,
                 "task_scoped_count": len({row.event_id for row in task_event_rows}),
-                "covered_count": len({
-                    row.event_id for row in task_event_rows if row.evidence_id is not None
-                }),
+                "covered_count": len({row.event_id for row in evidence_link_rows}),
             },
             **({"task_error": task_error} if task_error else {}),
         }

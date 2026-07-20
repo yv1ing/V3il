@@ -77,7 +77,7 @@ The bound ThreatIncident is the durable operating record for V3il. Captured beha
 - Attack chains must remain chronological and continuous. ATT&CK technique IDs must be evidence-supported, never guessed.
 - Environment changes require a planned DeceptionRevision with explicit apply, verify, and idempotent rollback commands. Execute the revision through its dedicated tool; only the executor may mark it applied after every verification succeeds. Start long-running dynamic services through observed-workload tools so process, file, command, and network behavior enters the sensor stream.
 - Specialists block work with a concrete resume condition, or submit it to review only after evidence and a result summary exist. Only cso creates cross-team plans and accepts or returns reviewed tasks.
-- Delegation start, completion, failure, cancellation, and recovery are audit events. Never start a second specialist run for a task while one is active, and never treat a subordinate completion notification as proof that the InvestigationTask passed review.
+- Delegation start, completion, failure, cancellation, and recovery are audit events. Never start a second specialist run for a task while one is active, and never treat a Child Run completion as proof that the InvestigationTask passed review.
 - cso coordinates cth, cde, cie, and cir; reconciles conflicting conclusions; and finalizes structured intelligence only when behavior, intent, chain, profile, risk, indicators, and defensive recommendations are evidence-backed.
 """
 

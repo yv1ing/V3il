@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
 
 from schema.detection.rules import (
     CentralRuleDefinition,
+    DetectionRuleValidationResult,
     DetectionRuleType,
     SuppressionRuleDefinition,
 )
@@ -20,10 +20,10 @@ _FORBIDDEN_ZEEK_PATTERNS: tuple[tuple[str, str], ...] = (
 )
 
 
-def validate_rule_content(rule_type: DetectionRuleType, content: str) -> dict[str, Any]:
+def validate_rule_content(rule_type: DetectionRuleType, content: str) -> DetectionRuleValidationResult:
     normalized = content.strip()
     errors: list[str] = []
-    parsed: dict[str, Any] | None = None
+    parsed: CentralRuleDefinition | SuppressionRuleDefinition | None = None
     if not normalized:
         errors.append("rule content is empty")
     elif rule_type == DetectionRuleType.CENTRAL_RULE:
@@ -34,34 +34,36 @@ def validate_rule_content(rule_type: DetectionRuleType, content: str) -> dict[st
         errors.extend(_validate_zeek_script(normalized))
     elif rule_type == DetectionRuleType.ZEEK_SIGNATURE:
         errors.extend(_validate_zeek_signature(normalized))
-    return {
-        "valid": not errors,
-        "errors": errors,
-        "normalized": parsed,
-        "validator": "v3il-static-detection-v1",
-        "sensor_validation_required": rule_type in {
+    return DetectionRuleValidationResult(
+        valid=not errors,
+        errors=errors,
+        normalized=parsed,
+        sensor_validation_required=rule_type in {
             DetectionRuleType.ZEEK_SCRIPT,
             DetectionRuleType.ZEEK_SIGNATURE,
         },
-    }
+    )
 
 
-def parsed_rule_content(rule_type: DetectionRuleType, content: str) -> dict[str, Any]:
+def parsed_rule_content(
+    rule_type: DetectionRuleType,
+    content: str,
+) -> CentralRuleDefinition | SuppressionRuleDefinition:
     if rule_type not in {DetectionRuleType.CENTRAL_RULE, DetectionRuleType.SUPPRESSION}:
-        return {}
+        raise ValueError("this detection rule type does not use structured content")
     result = validate_rule_content(rule_type, content)
-    if not result["valid"] or not isinstance(result["normalized"], dict):
+    if not result.valid or result.normalized is None:
         raise ValueError("rule content is not valid")
-    return result["normalized"]
+    return result.normalized
 
 
-def _validate_json_model(content: str, model) -> tuple[dict[str, Any] | None, list[str]]:
+def _validate_json_model(content: str, model):
     try:
         payload = json.loads(content)
         item = model.model_validate(payload)
     except (json.JSONDecodeError, ValueError) as exc:
         return None, [str(exc)]
-    return item.model_dump(mode="json"), []
+    return item, []
 
 
 def _validate_zeek_script(content: str) -> list[str]:

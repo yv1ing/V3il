@@ -1,16 +1,16 @@
 import type {
   AgentTranscript,
+  DelegationExecutionItem,
   ErrorItem,
   ExecutionItem,
-  SubagentExecutionItem,
   TextItem,
   ThinkingItem,
   ToolExecutionItem,
-} from "./chatState";
-import { isSubagentRunning } from "./subagentView";
+} from "./transcriptTypes";
+import { AGENT_RUN_STATUS } from "../../shared/api/generated/constants";
 
 type TranscriptItem = AgentTranscript["blocks"][number];
-export type ToolBlock = ToolExecutionItem | SubagentExecutionItem;
+export type ToolBlock = ExecutionItem;
 export type ContentBlock = TextItem | ErrorItem;
 export type TranscriptRenderSegment =
   | { kind: "thinking"; id: "thinking"; items: ThinkingItem[] }
@@ -19,36 +19,28 @@ export type TranscriptRenderSegment =
 
 export function buildTranscriptSegments(blocks: TranscriptItem[]): TranscriptRenderSegment[] {
   const thinkingItems: ThinkingItem[] = [];
-  const toolItems: ToolBlock[] = [];
+  const executionItems: ToolBlock[] = [];
   const contentSegments: TranscriptRenderSegment[] = [];
 
   for (const block of blocks) {
-    if (block.kind === "thinking") {
-      thinkingItems.push(block);
-    } else if (isToolBlock(block)) {
-      toolItems.push(block);
-    } else {
-      contentSegments.push({ kind: "content", id: `${block.kind}:${block.id}`, block });
-    }
+    if (block.kind === "thinking") thinkingItems.push(block);
+    else if (isExecutionBlock(block)) executionItems.push(block);
+    else contentSegments.push({ kind: "content", id: `${block.kind}:${block.id}`, block });
   }
 
-  const segments: TranscriptRenderSegment[] = [];
-  if (thinkingItems.length) segments.push({ kind: "thinking", id: "thinking", items: thinkingItems });
-  if (toolItems.length) segments.push({ kind: "tools", id: "tools", items: toolItems });
-  return [...segments, ...contentSegments];
+  return [
+    ...(thinkingItems.length ? [{ kind: "thinking" as const, id: "thinking" as const, items: thinkingItems }] : []),
+    ...(executionItems.length ? [{ kind: "tools" as const, id: "tools" as const, items: executionItems }] : []),
+    ...contentSegments,
+  ];
 }
 
 export function emptyAgentTranscript(): AgentTranscript {
-  return {
-    createdAt: "",
-    agentName: "",
-    blocks: [],
-    attachments: [],
-  };
+  return { runId: "", createdAt: "", agentCode: "", blocks: [] };
 }
 
 export function isTranscriptEmpty(transcript: AgentTranscript) {
-  return transcript.blocks.length === 0 && (transcript.attachments?.length ?? 0) === 0;
+  return transcript.blocks.length === 0;
 }
 
 export function activeThinkingItemId(blocks: TranscriptItem[]) {
@@ -60,20 +52,20 @@ export function activeTextItemId(blocks: TranscriptItem[]) {
 }
 
 export function transcriptHasRunningExecution(transcript: AgentTranscript): boolean {
-  return transcript.blocks.some((block) => isToolBlock(block) && isExecutionRunning(block));
+  return transcript.blocks.some((block) => isExecutionBlock(block) && isExecutionRunning(block));
 }
 
 export function transcriptItemCount(transcript: AgentTranscript) {
-  return transcript.blocks.length + (transcript.attachments?.length ?? 0);
+  return transcript.blocks.length;
 }
 
-function isToolBlock(block: TranscriptItem): block is ToolBlock {
-  return block.kind === "tool" || block.kind === "subagent";
+function isExecutionBlock(block: TranscriptItem): block is ToolExecutionItem | DelegationExecutionItem {
+  return block.kind === "tool" || block.kind === "delegation";
 }
 
 function isExecutionRunning(item: ExecutionItem) {
-  if (item.kind === "tool") {
-    return !item.resolved || isSubagentRunning(item.subagentTask?.status) || Boolean(item.nested && transcriptHasRunningExecution(item.nested));
-  }
-  return isSubagentRunning(item.status);
+  if (item.kind === "tool") return !item.resolved;
+  return item.status === AGENT_RUN_STATUS.QUEUED
+    || item.status === AGENT_RUN_STATUS.RUNNING
+    || item.status === AGENT_RUN_STATUS.WAITING;
 }

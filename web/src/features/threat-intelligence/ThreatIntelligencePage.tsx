@@ -8,6 +8,7 @@ import {
   ATTACKER_PROFILE_STATUS,
   INTELLIGENCE_REPORT_STATUS,
   INTENT_ASSESSMENT_STATUS,
+  PAGINATION_MAXIMUM_PAGE_SIZE,
   THREAT_INDICATOR_DISPOSITION,
   THREAT_SEVERITY,
 } from "../../shared/api/generated/constants";
@@ -59,15 +60,15 @@ export function ThreatIntelligencePage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const incidents = await collectAllPages<ThreatIncident>((page) => queryThreatIncidents({ page, size: 100, keyword: "" }));
+      const incidents = await collectAllPages<ThreatIncident>((page) => queryThreatIncidents({ page, size: PAGINATION_MAXIMUM_PAGE_SIZE, keyword: "" }));
       const intelligence = await Promise.all(incidents.map(async (incident) => {
         const [reports, indicators, assessments, chains, profiles, risks] = await Promise.all([
-          collectAllPages<IntelligenceReport>((page) => queryIntelligenceReports(incident.id, { page, size: 100 })),
-          collectAllPages<ThreatIndicator>((page) => queryThreatIndicators(incident.id, { page, size: 100, keyword: "" })),
-          collectAllPages<IntentAssessment>((page) => queryIntentAssessments(incident.id, { page, size: 100 })),
-          collectAllPages<AttackChain>((page) => queryAttackChains(incident.id, { page, size: 100 })),
-          collectAllPages<AttackerProfile>((page) => queryAttackerProfiles(incident.id, { page, size: 100 })),
-          collectAllPages<RiskAssessment>((page) => queryRiskAssessments(incident.id, { page, size: 100 })),
+          collectAllPages<IntelligenceReport>((page) => queryIntelligenceReports(incident.id, { page, size: PAGINATION_MAXIMUM_PAGE_SIZE })),
+          collectAllPages<ThreatIndicator>((page) => queryThreatIndicators(incident.id, { page, size: PAGINATION_MAXIMUM_PAGE_SIZE, keyword: "" })),
+          collectAllPages<IntentAssessment>((page) => queryIntentAssessments(incident.id, { page, size: PAGINATION_MAXIMUM_PAGE_SIZE })),
+          collectAllPages<AttackChain>((page) => queryAttackChains(incident.id, { page, size: PAGINATION_MAXIMUM_PAGE_SIZE })),
+          collectAllPages<AttackerProfile>((page) => queryAttackerProfiles(incident.id, { page, size: PAGINATION_MAXIMUM_PAGE_SIZE })),
+          collectAllPages<RiskAssessment>((page) => queryRiskAssessments(incident.id, { page, size: PAGINATION_MAXIMUM_PAGE_SIZE })),
         ]);
         const addIncident = <T extends object>(items: T[]): IntelligenceItem<T>[] => (
           items.map((item) => ({ ...item, incidentTitle: incident.title }))

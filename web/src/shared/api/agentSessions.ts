@@ -1,17 +1,25 @@
 import { apiBlob, buildAuthenticatedWebSocketUrl, defineJsonEndpoint } from "./client";
 import { buildQuery } from "./query";
 import type {
-  AgentTurnRequest,
   CancelAllAgentSessionTasksResponse,
   CreateAgentSessionTurnResponse,
-  DeleteAgentSessionResponse,
+  CreateAgentSessionTurnRequest,
+  ArchiveAgentSessionResponse,
   DownloadAgentReportPathParams,
+  GetAgentSessionResponse,
   InterruptAgentSessionResponse,
+  ListAgentToolInvocationRecoveriesResponse,
   ListAgentEventsParams,
   ListAgentEventsResponse,
   ListAgentSessionsParams,
   ListAgentSessionsResponse,
+  ListSandboxAsyncJobRecoveriesResponse,
+  ResolveAgentToolInvocationRequest,
+  ResolveAgentToolInvocationResponse,
+  ResolveSandboxAsyncJobRequest,
+  ResolveSandboxAsyncJobResponse,
   SubmitAgentSessionTurnResponse,
+  SubmitAgentSessionTurnRequest,
   UpdateAgentSessionSandboxContainerRequest,
   UpdateAgentSessionSandboxContainerResponse,
   UpdateAgentSessionTitleRequest,
@@ -23,11 +31,14 @@ const AGENT_SESSIONS_PATH = "/api/agent-sessions";
 export const listAgentSessions = defineJsonEndpoint<[params: ListAgentSessionsParams], ListAgentSessionsResponse>(
   "GET", (params) => `${AGENT_SESSIONS_PATH}${buildQuery(params)}`,
 );
-export const createAgentSessionTurn = defineJsonEndpoint<[payload: AgentTurnRequest], CreateAgentSessionTurnResponse>(
+export const getAgentSession = defineJsonEndpoint<[sessionId: string], GetAgentSessionResponse>(
+  "GET", (sessionId) => `${AGENT_SESSIONS_PATH}/${encodeURIComponent(sessionId)}`,
+);
+export const createAgentSessionTurn = defineJsonEndpoint<[payload: CreateAgentSessionTurnRequest], CreateAgentSessionTurnResponse>(
   "POST", () => `${AGENT_SESSIONS_PATH}/turns`, (payload) => payload,
 );
 export const submitAgentSessionTurn = defineJsonEndpoint<
-  [sessionId: string, payload: AgentTurnRequest], SubmitAgentSessionTurnResponse
+  [sessionId: string, payload: SubmitAgentSessionTurnRequest], SubmitAgentSessionTurnResponse
 >("POST", (sessionId) => `${AGENT_SESSIONS_PATH}/${encodeURIComponent(sessionId)}/turns`, (_, payload) => payload);
 export const interruptAgentSession = defineJsonEndpoint<[sessionId: string], InterruptAgentSessionResponse>(
   "POST", (sessionId) => `${AGENT_SESSIONS_PATH}/${encodeURIComponent(sessionId)}/interrupt`,
@@ -53,8 +64,31 @@ export const updateAgentSessionTitle = defineJsonEndpoint<
 export const updateAgentSessionSandboxContainer = defineJsonEndpoint<
   [sessionId: string, payload: UpdateAgentSessionSandboxContainerRequest], UpdateAgentSessionSandboxContainerResponse
 >("PATCH", (sessionId) => `${AGENT_SESSIONS_PATH}/${encodeURIComponent(sessionId)}/sandbox-container`, (_, payload) => payload);
-export const deleteAgentSession = defineJsonEndpoint<[sessionId: string], DeleteAgentSessionResponse>(
-  "DELETE", (sessionId) => `${AGENT_SESSIONS_PATH}/${encodeURIComponent(sessionId)}`,
+export const archiveAgentSession = defineJsonEndpoint<[sessionId: string], ArchiveAgentSessionResponse>(
+  "POST", (sessionId) => `${AGENT_SESSIONS_PATH}/${encodeURIComponent(sessionId)}/archive`,
+);
+
+export const listAgentToolInvocationRecoveries = defineJsonEndpoint<
+  [sessionId: string], ListAgentToolInvocationRecoveriesResponse
+>("GET", (sessionId) => `${AGENT_SESSIONS_PATH}/${encodeURIComponent(sessionId)}/tool-invocations/recovery`);
+export const resolveAgentToolInvocation = defineJsonEndpoint<
+  [sessionId: string, invocationId: string, payload: ResolveAgentToolInvocationRequest],
+  ResolveAgentToolInvocationResponse
+>(
+  "POST",
+  (sessionId, invocationId) => `${AGENT_SESSIONS_PATH}/${encodeURIComponent(sessionId)}/tool-invocations/${encodeURIComponent(invocationId)}/resolve`,
+  (_, __, payload) => payload,
+);
+export const listSandboxAsyncJobRecoveries = defineJsonEndpoint<
+  [sessionId: string], ListSandboxAsyncJobRecoveriesResponse
+>("GET", (sessionId) => `${AGENT_SESSIONS_PATH}/${encodeURIComponent(sessionId)}/sandbox-jobs/recovery`);
+export const resolveSandboxAsyncJob = defineJsonEndpoint<
+  [sessionId: string, jobId: string, payload: ResolveSandboxAsyncJobRequest],
+  ResolveSandboxAsyncJobResponse
+>(
+  "POST",
+  (sessionId, jobId) => `${AGENT_SESSIONS_PATH}/${encodeURIComponent(sessionId)}/sandbox-jobs/${encodeURIComponent(jobId)}/resolve`,
+  (_, __, payload) => payload,
 );
 
 export function downloadAgentReport(reportId: DownloadAgentReportPathParams["report_id"]) {

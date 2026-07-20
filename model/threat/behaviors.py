@@ -10,7 +10,8 @@ from schema.threat.behaviors import (
     BehaviorEventSource,
     BehaviorOutcome,
 )
-from utils.sqlalchemy import enum_value_type
+from utils.sqlalchemy import enum_value_type, utc_datetime_column
+from utils.time import utc_now
 
 
 class BehaviorEvent(SQLModel, table=True):
@@ -22,7 +23,7 @@ class BehaviorEvent(SQLModel, table=True):
     )
 
     id: int | None = Field(default=None, primary_key=True)
-    environment_id: int = Field(foreign_key="deception_environments.id", index=True, ondelete="CASCADE")
+    environment_id: int = Field(foreign_key="deception_environments.id", index=True, ondelete="RESTRICT")
     sensor_id: str = Field(index=True)
     network_session_id: str = Field(default="", max_length=128, index=True)
     sensor_bundle_hash: str = Field(default="", max_length=64, index=True)
@@ -30,10 +31,10 @@ class BehaviorEvent(SQLModel, table=True):
         default=None,
         foreign_key="deception_artifacts.id",
         index=True,
-        ondelete="SET NULL",
+        ondelete="RESTRICT",
     )
     sequence: int = Field(index=True)
-    observed_at: datetime = Field(index=True)
+    observed_at: datetime = Field(sa_column=utc_datetime_column(index=True))
     category: BehaviorEventCategory = Field(
         sa_column=Column(enum_value_type(BehaviorEventCategory, length=32), nullable=False, index=True)
     )
@@ -66,7 +67,10 @@ class BehaviorEvent(SQLModel, table=True):
     sensor_event_hash: str = Field(default="", max_length=64, index=True)
     previous_event_hash: str = Field(default="", max_length=64, index=True)
     event_hash: str = Field(max_length=64, index=True)
-    ingested_at: datetime = Field(default_factory=datetime.now, index=True)
+    ingested_at: datetime = Field(
+        default_factory=utc_now,
+        sa_column=utc_datetime_column(index=True),
+    )
 
 
 class BehaviorSensorCursor(SQLModel, table=True):
@@ -75,22 +79,22 @@ class BehaviorSensorCursor(SQLModel, table=True):
     environment_id: int = Field(
         foreign_key="deception_environments.id",
         primary_key=True,
-        ondelete="CASCADE",
+        ondelete="RESTRICT",
     )
     sensor_id: str = Field(primary_key=True, max_length=128)
     last_sequence: int = Field(default=0)
     verification_token: str = Field(default="")
     last_sensor_hash: str = Field(default="", max_length=64)
     last_event_hash: str = Field(default="", max_length=64)
-    last_observed_at: datetime | None = Field(default=None)
-    updated_at: datetime = Field(default_factory=datetime.now)
+    last_observed_at: datetime | None = Field(default=None, sa_column=utc_datetime_column(nullable=True))
+    updated_at: datetime = Field(default_factory=utc_now, sa_column=utc_datetime_column())
 
 
 class ThreatIncidentBehaviorEvent(SQLModel, table=True):
     __tablename__ = "threat_incident_behavior_events"
 
-    event_id: int = Field(foreign_key="behavior_events.id", primary_key=True, ondelete="CASCADE")
-    incident_id: int = Field(foreign_key="threat_incidents.id", index=True, ondelete="CASCADE")
+    event_id: int = Field(foreign_key="behavior_events.id", primary_key=True, ondelete="RESTRICT")
+    incident_id: int = Field(foreign_key="threat_incidents.id", index=True, ondelete="RESTRICT")
     linked_by_agent_code: str = Field(default="", index=True)
     linked_from_session_id: str = Field(default="", index=True)
     correlation_method: str = Field(default="", max_length=64, index=True)
@@ -98,4 +102,4 @@ class ThreatIncidentBehaviorEvent(SQLModel, table=True):
     is_material: bool = Field(default=True)
     materiality_reason: str = ""
     correlation_score: int = Field(default=0)
-    linked_at: datetime = Field(default_factory=datetime.now)
+    linked_at: datetime = Field(default_factory=utc_now, sa_column=utc_datetime_column())

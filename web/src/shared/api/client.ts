@@ -1,6 +1,6 @@
 import { clearStoredAccessToken, getStoredAccessToken } from "../auth/session";
-import { ACCESS_TOKEN_HEADER } from "./generated/constants";
-import type { CommonResponsePayload } from "./types";
+import { AUTH_ACCESS_TOKEN_HEADER } from "./generated/constants";
+import type { ProblemDetails } from "./types";
 
 type RequestOptions = {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -19,40 +19,39 @@ type RawRequestOptions = {
 
 export class ApiError extends Error {
   readonly status: number;
-  readonly response?: CommonResponsePayload;
+  readonly problem?: ProblemDetails;
 
-  constructor(status: number, response?: CommonResponsePayload) {
-    super(response?.message || "Request failed");
+  constructor(status: number, problem?: ProblemDetails, message = "Request failed") {
+    super(problem?.detail || message);
     this.name = "ApiError";
     this.status = status;
-    this.response = response;
+    this.problem = problem;
   }
 }
 
-function isCommonResponsePayload(value: unknown): value is CommonResponsePayload {
+function isProblemDetails(value: unknown): value is ProblemDetails {
   return typeof value === "object"
     && value !== null
-    && "code" in value
-    && typeof value.code === "number"
-    && "message" in value
-    && typeof value.message === "string";
+    && "status" in value
+    && typeof value.status === "number"
+    && "title" in value
+    && typeof value.title === "string"
+    && "detail" in value
+    && typeof value.detail === "string";
 }
 
 async function parseJsonResponse(response: Response) {
   const contentType = response.headers.get("content-type") || "";
-  if (!contentType.includes("application/json")) {
+  if (!contentType.includes("application/json") && !contentType.includes("+json")) {
     return undefined;
   }
   return response.json() as Promise<unknown>;
 }
 
-function parseCommonResponseError(response: Response, parsed: unknown) {
-  const payload = isCommonResponsePayload(parsed) ? parsed : undefined;
-  const payloadCode = typeof payload?.code === "number" ? payload.code : response.status;
-  if (!response.ok || payloadCode >= 400) {
-    handleAuthExpired(response.status, payloadCode);
-    throw new ApiError(response.status, payload);
-  }
+function raiseForProblem(response: Response, parsed: unknown) {
+  if (response.ok) return;
+  handleAuthExpired(response.status);
+  throw new ApiError(response.status, isProblemDetails(parsed) ? parsed : undefined);
 }
 
 export async function apiRequest<ResponsePayload>(path: string, options: RequestOptions = {}) {
@@ -71,14 +70,11 @@ export async function apiRequest<ResponsePayload>(path: string, options: Request
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
     });
   } catch (error) {
-    throw new ApiError(0, {
-      code: 0,
-      message: error instanceof Error ? error.message : "Network request failed",
-    });
+    throw new ApiError(0, undefined, error instanceof Error ? error.message : "Network request failed");
   }
 
   const parsed = await parseJsonResponse(response);
-  parseCommonResponseError(response, parsed);
+  raiseForProblem(response, parsed);
   return parsed as ResponsePayload;
 }
 
@@ -106,10 +102,7 @@ async function rawApiRequest(path: string, options: RawRequestOptions = {}) {
       body: options.body,
     });
   } catch (error) {
-    throw new ApiError(0, {
-      code: 0,
-      message: error instanceof Error ? error.message : "Network request failed",
-    });
+    throw new ApiError(0, undefined, error instanceof Error ? error.message : "Network request failed");
   }
 }
 
@@ -121,7 +114,7 @@ export async function apiForm<ResponsePayload>(path: string, body: FormData, aut
     auth,
   });
   const parsed = await parseJsonResponse(response);
-  parseCommonResponseError(response, parsed);
+  raiseForProblem(response, parsed);
   return parsed as ResponsePayload;
 }
 
@@ -129,7 +122,7 @@ export async function apiBlob(path: string, auth = true) {
   const response = await rawApiRequest(path, { auth });
   if (!response.ok) {
     const parsed = await parseJsonResponse(response);
-    parseCommonResponseError(response, parsed);
+    raiseForProblem(response, parsed);
     throw new ApiError(response.status);
   }
   return {
@@ -138,8 +131,8 @@ export async function apiBlob(path: string, auth = true) {
   };
 }
 
-function handleAuthExpired(status: number, payloadCode: number) {
-  if (status !== 401 && payloadCode !== 401) return;
+function handleAuthExpired(status: number) {
+  if (status !== 401) return;
   clearStoredAccessToken();
   window.dispatchEvent(new Event("v3il:auth-expired"));
 }
@@ -154,7 +147,7 @@ function addAccessTokenHeader(headers: Headers, auth = true) {
   if (!auth) return;
   const token = getStoredAccessToken();
   if (token) {
-    headers.set(ACCESS_TOKEN_HEADER, token);
+    headers.set(AUTH_ACCESS_TOKEN_HEADER, token);
   }
 }
 

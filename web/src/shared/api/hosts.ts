@@ -3,15 +3,15 @@ import { buildQuery } from "./query";
 import type {
   CreateManagedHostRequest,
   CreateManagedHostResponse,
-  DeleteManagedHostImageRequest,
-  DeleteManagedHostImageResponse,
-  DeleteManagedHostResponse,
   ListManagedHostImagesResponse,
   ManagedHostPathParams,
   PullManagedHostImagesRequest,
   PullManagedHostImagesResponse,
   QueryManagedHostsParams,
   QueryManagedHostsResponse,
+  RemoveManagedHostImageRequest,
+  RemoveManagedHostImageResponse,
+  RetireManagedHostResponse,
   UpdateManagedHostRequest,
   UpdateManagedHostResponse,
 } from "./types";
@@ -27,8 +27,8 @@ export const createManagedHost = defineJsonEndpoint<[payload: CreateManagedHostR
 export const updateManagedHost = defineJsonEndpoint<
   [id: ManagedHostPathParams["id"], payload: UpdateManagedHostRequest], UpdateManagedHostResponse
 >("PATCH", (id) => `${HOSTS_PATH}/${id}`, (_, payload) => payload);
-export const deleteManagedHost = defineJsonEndpoint<[id: ManagedHostPathParams["id"]], DeleteManagedHostResponse>(
-  "DELETE", (id) => `${HOSTS_PATH}/${id}`,
+export const retireManagedHost = defineJsonEndpoint<[id: ManagedHostPathParams["id"]], RetireManagedHostResponse>(
+  "POST", (id) => `${HOSTS_PATH}/${id}/retire`,
 );
 export const listManagedHostImages = defineJsonEndpoint<[id: ManagedHostPathParams["id"]], ListManagedHostImagesResponse>(
   "GET", (id) => `${HOSTS_PATH}/${id}/images`,
@@ -37,7 +37,7 @@ export const pullManagedHostImages = defineJsonEndpoint<
   [id: ManagedHostPathParams["id"], payload: PullManagedHostImagesRequest], PullManagedHostImagesResponse
 >("POST", (id) => `${HOSTS_PATH}/${id}/images/pull`, (_, payload) => payload);
 export const removeManagedHostImage = defineJsonEndpoint<
-  [id: ManagedHostPathParams["id"], payload: DeleteManagedHostImageRequest], DeleteManagedHostImageResponse
+  [id: ManagedHostPathParams["id"], payload: RemoveManagedHostImageRequest], RemoveManagedHostImageResponse
 >("POST", (id) => `${HOSTS_PATH}/${id}/images/remove`, (_, payload) => payload);
 
 export function buildHostShellUrl(id: ManagedHostPathParams["id"]) {

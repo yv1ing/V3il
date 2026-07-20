@@ -10,9 +10,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from config import ROOT_PATH, get_config
 
-from core.delegation.subagents import start_subagent_runtime, stop_subagent_runtime
 from core.lightrag.runtime import start_lightrag, stop_lightrag
-from core.runtime.session import get_agent_pool
 from core.sandbox.command_jobs import start_async_sandbox_runtime, stop_async_sandbox_commands
 from database import close_engine, create_all_tables, init_engine
 from logger import get_logger
@@ -42,14 +40,18 @@ from router.threat.incidents import router as threat_incident_router
 from router.threat.intelligence import router as threat_intelligence_router
 from router.threat.investigations import router as investigation_task_router
 from schema.system_user.users import SystemUserRole
-from service.agent.recovery import recover_pending_sessions
+from schema.common.openapi import build_openapi_contract
 from service.agent.reports import start_report_cleanup_runtime, stop_report_cleanup_runtime
+from service.agent.supervisor import AgentRuntimeSupervisor
 from service.deception.executions import recover_interrupted_deception_revisions
 from service.deception.evaluations import start_deception_evaluation_runtime, stop_deception_evaluation_runtime
-from service.detection.deployment import recover_detection_deployments, stop_detection_deployments
+from service.detection.deployment import start_detection_deployment_runtime, stop_detection_deployments
+from service.detection.sensor_bundles import (
+    start_sensor_bundle_refresh_runtime,
+    stop_sensor_bundle_refreshes,
+)
 from service.detection.rules import seed_builtin_detection_rules
 from service.detection.sensors import start_zeek_sensor_runtime, stop_zeek_sensor_runtime
-from service.detection.sensor_bundles import schedule_all_sensor_bundle_refreshes, stop_sensor_bundle_refreshes
 from service.host.hosts import ensure_local_managed_host
 from service.knowledge.runtime import (
     start_knowledge_document_runtime,
@@ -119,14 +121,6 @@ async def _reset_sandbox_status_event_orchestrator() -> None:
     set_sandbox_status_event_orchestrator(None)
 
 
-async def _invalidate_current_agent_tool_bindings(container_id: int | None) -> None:
-    await get_agent_pool().invalidate_tool_bindings(container_id)
-
-
-async def _stop_current_agent_pool() -> None:
-    await get_agent_pool().stop()
-
-
 async def _shutdown_runtime(
     steps: list[tuple[str, Callable[[], Awaitable[None]]]],
 ) -> None:
@@ -153,7 +147,7 @@ def _mount_frontend(app: FastAPI) -> None:
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     shutdown_steps: list[tuple[str, Callable[[], Awaitable[None]]]] = []
     try:
         try:
@@ -169,7 +163,7 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
             await _bootstrap_local_host()
             await seed_builtin_detection_rules()
             await recover_interrupted_deception_revisions()
-            await recover_detection_deployments()
+            await start_detection_deployment_runtime()
             shutdown_steps.append(("detection deployments", stop_detection_deployments))
 
             await start_lightrag()
@@ -182,23 +176,19 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
             set_tracing_disabled(True)
             await start_async_sandbox_runtime()
             shutdown_steps.append(("sandbox command runtime", stop_async_sandbox_commands))
-            await start_subagent_runtime()
-            shutdown_steps.append(("subagent runtime", stop_subagent_runtime))
             await start_report_cleanup_runtime()
             shutdown_steps.append(("report cleanup runtime", stop_report_cleanup_runtime))
 
-            await get_agent_pool().start()
-            shutdown_steps.append(("agent pool", _stop_current_agent_pool))
-            set_agent_tool_binding_invalidator(_invalidate_current_agent_tool_bindings)
-            shutdown_steps.append(("agent tool bindings", _reset_agent_tool_bindings))
-
-            await recover_pending_sessions()
+            agent_runtime = AgentRuntimeSupervisor()
+            app.state.agent_runtime = agent_runtime
+            await agent_runtime.start()
+            shutdown_steps.append(("agent runtime", agent_runtime.stop))
             await start_behavior_telemetry_runtime()
             shutdown_steps.append(("behavior telemetry runtime", stop_behavior_telemetry_runtime))
             await start_zeek_sensor_runtime()
             shutdown_steps.append(("Zeek sensor runtime", stop_zeek_sensor_runtime))
             shutdown_steps.append(("sensor Bundle refreshes", stop_sensor_bundle_refreshes))
-            await schedule_all_sensor_bundle_refreshes()
+            await start_sensor_bundle_refresh_runtime()
             await start_deception_evaluation_runtime()
             shutdown_steps.append(("deception evaluation runtime", stop_deception_evaluation_runtime))
             set_sandbox_status_event_orchestrator(orchestrate_behavior_events)
@@ -254,4 +244,5 @@ def create_app() -> FastAPI:
     logger.debug("api router added")
 
     _mount_frontend(app)
+    app.openapi = lambda: build_openapi_contract(app)
     return app

@@ -1,7 +1,6 @@
 import asyncio
 import getpass
 from dataclasses import dataclass
-from datetime import datetime
 
 from sqlalchemy import String, cast, or_, text
 from sqlmodel import select
@@ -9,10 +8,13 @@ from sqlmodel import select
 from database import get_async_session
 from model.host.hosts import ManagedHost
 from model.sandbox.containers import SandboxContainer
+from schema.sandbox.containers import SandboxContainerStatus
 from schema.host.hosts import ManagedHostImageSchema, ManagedHostSchema, PullManagedHostImageResultSchema
+from schema.common.resources import ResourceLifecycleStatus
 from service.common.pagination import Page, RESOURCE_PAGE_SIZE, paginate_statement
 from service.host.docker import list_host_images_sync, pull_host_images_sync, remove_host_image_sync
 from service.host.state import ManagedHostConnection, snapshot_managed_host
+from utils.time import utc_now
 
 
 DEFAULT_LOCAL_HOST_ID = 1
@@ -20,8 +22,8 @@ _IMAGE_PULL_BATCH_SIZE = 4
 
 
 @dataclass(frozen=True)
-class DeleteManagedHostResult:
-    deleted: bool
+class RetireManagedHostResult:
+    retired: bool
     not_found: bool = False
     message: str = ""
 
@@ -44,7 +46,7 @@ async def create_managed_host(
     docker_client_cert: str,
     docker_client_key: str,
 ) -> ManagedHostSchema:
-    now = datetime.now()
+    now = utc_now()
     host = ManagedHost(
         ip_address=ip_address,
         ssh_port=ssh_port,
@@ -82,7 +84,10 @@ async def update_managed_host(
 ) -> UpdateManagedHostResult:
     async with get_async_session() as session:
         host = (await session.exec(
-            select(ManagedHost).where(ManagedHost.id == id).with_for_update()
+            select(ManagedHost).where(
+                ManagedHost.id == id,
+                ManagedHost.status == ResourceLifecycleStatus.ACTIVE,
+            ).with_for_update()
         )).one_or_none()
         if host is None:
             return UpdateManagedHostResult(host=None, not_found=True, message="managed host not found")
@@ -145,7 +150,7 @@ async def update_managed_host(
         host.docker_client_cert = next_docker_client_cert
         host.docker_client_key = next_docker_client_key
 
-        host.updated_at = datetime.now()
+        host.updated_at = utc_now()
         session.add(host)
         await session.commit()
         await session.refresh(host)
@@ -154,25 +159,32 @@ async def update_managed_host(
     return UpdateManagedHostResult(host=result)
 
 
-async def delete_managed_host(id: int) -> DeleteManagedHostResult:
+async def retire_managed_host(id: int) -> RetireManagedHostResult:
     if id == DEFAULT_LOCAL_HOST_ID:
-        return DeleteManagedHostResult(deleted=False, message="default local host cannot be deleted")
+        return RetireManagedHostResult(retired=False, message="default local host cannot be retired")
     async with get_async_session() as session:
         host = (await session.exec(
-            select(ManagedHost).where(ManagedHost.id == id).with_for_update()
+            select(ManagedHost).where(
+                ManagedHost.id == id,
+                ManagedHost.status == ResourceLifecycleStatus.ACTIVE,
+            ).with_for_update()
         )).one_or_none()
         if host is None:
-            return DeleteManagedHostResult(deleted=False, not_found=True, message="managed host not found")
+            return RetireManagedHostResult(retired=False, not_found=True, message="managed host not found")
         if await _host_has_sandbox_containers(session, id):
-            return DeleteManagedHostResult(
-                deleted=False,
+            return RetireManagedHostResult(
+                retired=False,
                 message="managed host is used by sandbox containers",
             )
 
-        await session.delete(host)
+        now = utc_now()
+        host.status = ResourceLifecycleStatus.RETIRED
+        host.retired_at = now
+        host.updated_at = now
+        session.add(host)
         await session.commit()
 
-    return DeleteManagedHostResult(deleted=True)
+    return RetireManagedHostResult(retired=True)
 
 
 async def query_managed_hosts(
@@ -180,7 +192,9 @@ async def query_managed_hosts(
     size: int = RESOURCE_PAGE_SIZE,
     keyword: str = "",
 ) -> Page[ManagedHostSchema]:
-    statement = select(ManagedHost).order_by(ManagedHost.id)
+    statement = select(ManagedHost).where(
+        ManagedHost.status == ResourceLifecycleStatus.ACTIVE,
+    ).order_by(ManagedHost.id)
 
     keyword = keyword.strip()
     if keyword:
@@ -204,7 +218,10 @@ async def query_managed_hosts(
 
 async def query_managed_host_by_id(id: int) -> ManagedHostConnection | None:
     async with get_async_session() as session:
-        host = await session.get(ManagedHost, id)
+        host = (await session.exec(select(ManagedHost).where(
+            ManagedHost.id == id,
+            ManagedHost.status == ResourceLifecycleStatus.ACTIVE,
+        ))).one_or_none()
         return snapshot_managed_host(host) if host is not None else None
 
 
@@ -214,7 +231,7 @@ async def ensure_local_managed_host() -> ManagedHostSchema:
     async with get_async_session() as session:
         host = await session.get(ManagedHost, DEFAULT_LOCAL_HOST_ID)
         if host is None:
-            now = datetime.now()
+            now = utc_now()
             host = ManagedHost(
                 id=DEFAULT_LOCAL_HOST_ID,
                 ip_address="127.0.0.1",
@@ -238,7 +255,7 @@ async def ensure_local_managed_host() -> ManagedHostSchema:
                 host.host_account = username
                 updated = True
             if updated:
-                host.updated_at = datetime.now()
+                host.updated_at = utc_now()
                 session.add(host)
                 await session.commit()
                 await session.refresh(host)
@@ -279,7 +296,7 @@ async def pull_managed_host_images(id: int, image_names: list[str]) -> list[Pull
     return results
 
 
-async def delete_managed_host_image(id: int, image_id: str, force: bool = False) -> str | None:
+async def remove_managed_host_image(id: int, image_id: str, force: bool = False) -> str | None:
     host = await query_managed_host_by_id(id)
     if host is None:
         return "managed host not found"
@@ -291,7 +308,10 @@ async def delete_managed_host_image(id: int, image_id: str, force: bool = False)
 
 
 async def _host_has_sandbox_containers(session, host_id: int) -> bool:
-    result = await session.exec(select(SandboxContainer.id).where(SandboxContainer.host_id == host_id).limit(1))
+    result = await session.exec(select(SandboxContainer.id).where(
+        SandboxContainer.host_id == host_id,
+        SandboxContainer.status != SandboxContainerStatus.REMOVED,
+    ).limit(1))
     return result.first() is not None
 
 

@@ -22,8 +22,8 @@ features:
     details: 通过自然语言和参考资料设计攻击者可见环境，以版本化方式部署、验证和调整。
   - title: 行为与检测
     details: 汇聚多层行为遥测与 Zeek 信号，将相关活动组织为连续、可追溯的 Incident 时间线。
-  - title: 多智能体调查
-    details: 五个固定角色围绕任务、证据和复核协作，形成攻击意图、攻击链、画像与风险判断。
+  - title: Agent Defense Team
+    details: 五个固定角色通过持久 Session、范围明确的 Run、证据和复核协作，形成攻击意图、攻击链、画像与风险判断。
   - title: 情报交付
     details: 将调查结论沉淀为响应建议、报告、证据包和可检索知识。
 ---

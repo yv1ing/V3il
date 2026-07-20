@@ -1,224 +1,147 @@
-"""SDK Session backend that keeps SDK tables untouched and stores owner /
-nested-call attribution in `agent_message_meta` (1:1 FK to agent_messages.id)."""
-
-import json
-from dataclasses import dataclass
-from datetime import datetime
 from typing import Any
+from collections.abc import Awaitable, Callable
 
-from agents.extensions.memory import SQLAlchemySession
 from agents.items import TResponseInputItem
-from sqlalchemy import insert, select, text as sql_text, update
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+from agents.memory.session_settings import SessionSettings, resolve_session_limit
+from sqlalchemy import update
+from sqlmodel import select
+from sqlmodel.ext.asyncio.session import AsyncSession
 
-from config import AgentConfig
-from core.conversation.compaction import (
-    CompactionScope,
-    compact_if_needed as compact_session_context_if_needed,
-    get_latest_compaction,
-)
-from core.conversation.formats import is_context_summary_item
-from core.conversation.projection import ContextProjection, project_context
-from model.agent.message_meta import AgentMessageMeta
-from utils.sdk_tables import agent_messages
+from database import get_async_session
+from model.agent.sessions import AgentContext, AgentContextItem
+from schema.agent.types import AgentContextItemStatus
+from utils.time import utc_now
 
 
-@dataclass(frozen=True, slots=True)
-class StoredItem:
-    message_id: int
-    created_at: datetime
-    owner_code: str
-    item: dict[str, Any]
-    nested_for: str = ""
-    nested_call_id: str = ""
+class V3ilSession:
+    """OpenAI Agents SDK Session backed by one isolated V3il AgentContext."""
 
+    session_settings: SessionSettings | None = None
 
-class V3ilSession(SQLAlchemySession):
     def __init__(
         self,
+        context_id: str,
         *,
-        session_id: str,
-        engine: AsyncEngine,
-        viewing_agent_code: str,
-        agent_code_to_name: dict[str, str],
-        nested_for_agent_code: str = "",
-        nested_call_id: str = "",
+        attempt_id: str,
+        write_fence: Callable[[AsyncSession], Awaitable[Any]],
     ) -> None:
-        super().__init__(session_id=session_id, engine=engine)
-        self._viewing_agent_code = viewing_agent_code
-        self._agent_code_to_name = agent_code_to_name
-        self._nested_for = nested_for_agent_code
-        self._nested_call_id = nested_call_id if nested_for_agent_code else ""
+        self.session_id = context_id
+        self._attempt_id = attempt_id
+        self._write_fence = write_fence
+
+    async def get_items(self, limit: int | None = None) -> list[TResponseInputItem]:
+        effective_limit = resolve_session_limit(limit, self.session_settings)
+        statement = select(AgentContextItem.item).where(
+            AgentContextItem.context_id == self.session_id,
+            AgentContextItem.status == AgentContextItemStatus.ACTIVE,
+        )
+        if effective_limit is None:
+            statement = statement.order_by(AgentContextItem.seq.asc())
+        else:
+            statement = statement.order_by(AgentContextItem.seq.desc()).limit(effective_limit)
+        async with get_async_session() as session:
+            rows = list((await session.exec(statement)).all())
+        if effective_limit is not None:
+            rows.reverse()
+        return [dict(item) for item in rows]
+
+    async def get_items_for_retrieval(self, recent_limit: int) -> list[TResponseInputItem]:
+        return await self.get_items(limit=recent_limit)
 
     async def add_items(self, items: list[TResponseInputItem]) -> None:
         if not items:
             return
-        await self._ensure_tables()
+        async with get_async_session() as session:
+            await self._write_fence(session)
+            context = (await session.exec(
+                select(AgentContext)
+                .where(AgentContext.id == self.session_id)
+                .with_for_update()
+            )).one_or_none()
+            if context is None:
+                raise RuntimeError("agent context no longer exists")
+            next_seq = context.next_item_seq
+            serialized = [(_json_item(item), _item_dedupe_key(item)) for item in items]
+            dedupe_keys = [key for _, key in serialized if key]
+            existing_by_key: dict[str, AgentContextItem] = {}
+            if dedupe_keys:
+                existing = list((await session.exec(select(AgentContextItem).where(
+                    AgentContextItem.context_id == self.session_id,
+                    AgentContextItem.dedupe_key.in_(dedupe_keys),
+                ).with_for_update())).all())
+                existing_by_key = {row.dedupe_key: row for row in existing}
 
-        message_payload = [
-            {"session_id": self.session_id, "message_data": json.dumps(item, separators=(",", ":"))}
-            for item in items
-        ]
-        owner = self._viewing_agent_code
-        nested_for = self._nested_for
-        nested_call_id = self._nested_call_id
-        meta_table = AgentMessageMeta.__table__
+            inserted = 0
+            for item, dedupe_key in serialized:
+                existing = existing_by_key.get(dedupe_key) if dedupe_key else None
+                if existing is not None:
+                    if existing.status == AgentContextItemStatus.REWOUND:
+                        existing.status = AgentContextItemStatus.ACTIVE
+                        existing.retired_at = None
+                        session.add(existing)
+                    continue
+                session.add(AgentContextItem(
+                    context_id=self.session_id,
+                    seq=next_seq + inserted,
+                    provenance_attempt_id=self._attempt_id,
+                    dedupe_key=dedupe_key,
+                    item=item,
+                ))
+                inserted += 1
+            context.next_item_seq += inserted
+            session.add(context)
+            await session.commit()
 
-        async def _write() -> None:
-            async with self._session_factory() as sess, sess.begin():
-                await self._ensure_session_row(sess)
-
-                # bulk insert messages and capture the assigned ids in payload order
-                result = await sess.execute(
-                    insert(self._messages).returning(self._messages.c.id),
-                    message_payload,
+    async def pop_item(self) -> TResponseInputItem | None:
+        async with get_async_session() as session:
+            await self._write_fence(session)
+            row = (await session.exec(
+                select(AgentContextItem)
+                .where(
+                    AgentContextItem.context_id == self.session_id,
+                    AgentContextItem.status == AgentContextItemStatus.ACTIVE,
                 )
-                inserted_ids = [row[0] for row in result]
+                .order_by(AgentContextItem.seq.desc())
+                .limit(1)
+                .with_for_update()
+            )).one_or_none()
+            if row is None:
+                return None
+            item = dict(row.item)
+            row.status = AgentContextItemStatus.REWOUND
+            row.retired_at = utc_now()
+            session.add(row)
+            await session.commit()
+            return item
 
-                if inserted_ids:
-                    await sess.execute(insert(meta_table), [
-                        {
-                            "message_id": mid,
-                            "owner_code": owner,
-                            "nested_for": nested_for,
-                            "nested_call_id": nested_call_id,
-                        }
-                        for mid in inserted_ids
-                    ])
-
-                await sess.execute(
-                    update(self._sessions)
-                    .where(self._sessions.c.session_id == self.session_id)
-                    .values(updated_at=sql_text("CURRENT_TIMESTAMP"))
-                )
-
-        await self._run_sqlite_write_with_retry(_write)
-
-    async def get_items(self, limit: int | None = None) -> list[TResponseInputItem]:
-        await self._ensure_tables()
-        projected = await self._projected_items()
-        if limit is None:
-            return projected
-        return projected[-limit:] if limit > 0 else []
-
-    async def get_items_for_retrieval(self, recent_limit: int) -> list[TResponseInputItem]:
-        """Return the compaction anchor plus a bounded recent context tail."""
-        if recent_limit <= 0:
-            return []
-        await self._ensure_tables()
-        projected = await self._projected_items()
-        recent = projected[-recent_limit:]
-        if len(projected) > recent_limit and is_context_summary_item(projected[0]):
-            return [projected[0], *recent]
-        return recent
-
-    async def compact_if_needed(
-        self,
-        *,
-        agent_config: AgentConfig,
-        incoming_items: list[TResponseInputItem],
-    ) -> None:
-        await self._ensure_tables()
-        projection = await self._context_projection()
-        await compact_session_context_if_needed(
-            session_factory=self._session_factory,
-            scope=self._compaction_scope(),
-            agent_config=agent_config,
-            projection=projection,
-            incoming_items=incoming_items,
-        )
-
-    async def _projected_items(self) -> list[TResponseInputItem]:
-        return (await self._context_projection()).items
-
-    async def _context_projection(self) -> ContextProjection:
-        async with self._session_factory() as sess:
-            compaction = await get_latest_compaction(sess, self._compaction_scope())
-            stored = await fetch_stored_items(
-                sess,
-                self.session_id,
-                after_id=compaction.end_message_id if compaction is not None else None,
-            )
-        return project_context(
-            stored,
-            viewing_agent_code=self._viewing_agent_code,
-            agent_code_to_name=self._agent_code_to_name,
-            nested_for=self._nested_for,
-            nested_call_id=self._nested_call_id,
-            compaction=compaction,
-        )
-
-    async def _ensure_session_row(self, sess: AsyncSession) -> None:
-        existing = await sess.execute(
-            select(self._sessions.c.session_id).where(self._sessions.c.session_id == self.session_id)
-        )
-        if existing.scalar_one_or_none() is not None:
-            return
-        try:
-            async with sess.begin_nested():
-                await sess.execute(insert(self._sessions).values({"session_id": self.session_id}))
-        except IntegrityError:
-            # raced with another writer that created the parent row first
-            pass
-
-    def _compaction_scope(self) -> CompactionScope:
-        return CompactionScope(
-            session_id=self.session_id,
-            viewer_agent_code=self._viewing_agent_code,
-            nested_for=self._nested_for,
-            nested_call_id=self._nested_call_id,
-        )
+    async def clear_session(self) -> None:
+        async with get_async_session() as session:
+            await self._write_fence(session)
+            await session.execute(update(AgentContextItem).where(
+                AgentContextItem.context_id == self.session_id,
+                AgentContextItem.status == AgentContextItemStatus.ACTIVE,
+            ).values(
+                status=AgentContextItemStatus.CLEARED,
+                retired_at=utc_now(),
+            ))
+            await session.commit()
 
 
-async def fetch_stored_items(
-    sess: AsyncSession,
-    session_id: str,
-    *,
-    before_id: int | None = None,
-    after_id: int | None = None,
-    limit: int | None = None,
-) -> list[StoredItem]:
-    """Load messages + owner attribution for one conversation, in ascending order."""
-    meta_table = AgentMessageMeta.__table__
-    stmt = (
-        select(
-            agent_messages.c.id,
-            agent_messages.c.created_at,
-            agent_messages.c.message_data,
-            meta_table.c.owner_code,
-            meta_table.c.nested_for,
-            meta_table.c.nested_call_id,
-        )
-        .select_from(
-            agent_messages.outerjoin(meta_table, agent_messages.c.id == meta_table.c.message_id)
-        )
-        .where(agent_messages.c.session_id == session_id)
-    )
-    if before_id is not None:
-        stmt = stmt.where(agent_messages.c.id < before_id)
-    if after_id is not None:
-        stmt = stmt.where(agent_messages.c.id > after_id)
-    if limit is None:
-        stmt = stmt.order_by(agent_messages.c.created_at.asc(), agent_messages.c.id.asc())
-    else:
-        stmt = stmt.order_by(agent_messages.c.created_at.desc(), agent_messages.c.id.desc()).limit(limit)
-    result = await sess.execute(stmt)
+def _json_item(item: TResponseInputItem) -> dict[str, Any]:
+    if isinstance(item, dict):
+        return dict(item)
+    if hasattr(item, "model_dump"):
+        return item.model_dump(mode="json")
+    raise TypeError(f"unsupported SDK context item: {type(item).__name__}")
 
-    items: list[StoredItem] = []
-    for row in result.all():
-        try:
-            item = json.loads(row.message_data)
-        except (TypeError, json.JSONDecodeError):
-            continue
-        if not isinstance(item, dict):
-            continue
-        items.append(StoredItem(
-            message_id=row.id,
-            created_at=row.created_at,
-            owner_code=row.owner_code or "",
-            item=item,
-            nested_for=row.nested_for or "",
-            nested_call_id=row.nested_call_id or "",
-        ))
-    return items if limit is None else list(reversed(items))
+
+def _item_dedupe_key(item: TResponseInputItem | dict[str, Any]) -> str:
+    value = _json_item(item)
+    item_type = value.get("type")
+    if item_type in {"function_call", "function_call_output"}:
+        call_id = value.get("call_id") or value.get("id")
+        if isinstance(call_id, str) and call_id:
+            suffix = "call" if item_type == "function_call" else "output"
+            return f"tool:{suffix}:{call_id}"
+    item_id = value.get("id")
+    return f"item:{item_id}" if isinstance(item_id, str) and item_id else ""

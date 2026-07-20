@@ -1,15 +1,15 @@
 import { Button, Input, InputNumber, Switch } from "@douyinfe/semi-ui";
-import { Bot, DatabaseZap, RadioTower, RotateCcw, Save, Settings, ShieldCheck, X } from "lucide-react";
+import { Bot, DatabaseZap, RadioTower, Save, Settings, ShieldCheck, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { getInstanceConfig, updateInstanceConfig } from "../../shared/api/systemConfig";
 import { showApiError, showApiSuccess } from "../../shared/api/feedback";
-import { SYSTEM_CONFIG_FIELD_CONSTRAINTS } from "../../shared/api/generated/constants";
+import { FIELD_CONSTRAINTS } from "../../shared/api/generated/constants";
 import { MetricStrip } from "../../shared/components/ResourcePageShell";
 import { AsyncContent } from "../../shared/components/AsyncContent";
 import { cx } from "../../shared/lib/className";
 import type {
   AgentConfig,
-  AgentPoolConfig,
+  AgentCode,
   AgentRuntimeConfig,
   BehaviorCaptureConfig,
   InstanceConfig,
@@ -29,7 +29,6 @@ type LightRAGFormValue = LightRAGConfig;
 
 type ConfigFormValue = {
   agents: AgentFormValue[];
-  agent_pool: AgentPoolConfig;
   agent_runtime: AgentRuntimeConfig;
   behavior_capture: BehaviorCaptureConfig;
   lightrag: LightRAGFormValue;
@@ -63,20 +62,22 @@ type AgentTextField = {
   secret?: boolean;
 };
 
-const AGENT_CONSTRAINTS = SYSTEM_CONFIG_FIELD_CONSTRAINTS.AgentConfig;
-const POOL_CONSTRAINTS = SYSTEM_CONFIG_FIELD_CONSTRAINTS.AgentPoolConfig;
-const RUNTIME_CONSTRAINTS = SYSTEM_CONFIG_FIELD_CONSTRAINTS.AgentRuntimeConfig;
-const CAPTURE_CONSTRAINTS = SYSTEM_CONFIG_FIELD_CONSTRAINTS.BehaviorCaptureConfig;
-const AUTOMATION_CONSTRAINTS = SYSTEM_CONFIG_FIELD_CONSTRAINTS.ThreatAutomationConfig;
-const LIGHTRAG_CONSTRAINTS = SYSTEM_CONFIG_FIELD_CONSTRAINTS.LightRAGConfig;
+const AGENT_CONSTRAINTS = FIELD_CONSTRAINTS.AgentConfig;
+const RUNTIME_CONSTRAINTS = FIELD_CONSTRAINTS.AgentRuntimeConfig;
+const CAPTURE_CONSTRAINTS = FIELD_CONSTRAINTS.BehaviorCaptureConfig;
+const AUTOMATION_CONSTRAINTS = FIELD_CONSTRAINTS.ThreatAutomationConfig;
+const LIGHTRAG_CONSTRAINTS = FIELD_CONSTRAINTS.LightRAGConfig;
 const RATIO_STEP = 0.01;
 
 const RUNTIME_FIELD_GROUPS: ConfigFieldGroup<AgentRuntimeConfig>[] = [
   {
     title: "Execution",
     fields: [
+      { key: "max_concurrent_runs", label: "Concurrent Agent Runs", min: RUNTIME_CONSTRAINTS.max_concurrent_runs.minimum, max: RUNTIME_CONSTRAINTS.max_concurrent_runs.maximum },
+      { key: "max_concurrent_sandbox_jobs", label: "Concurrent Sandbox Jobs", min: RUNTIME_CONSTRAINTS.max_concurrent_sandbox_jobs.minimum, max: RUNTIME_CONSTRAINTS.max_concurrent_sandbox_jobs.maximum },
+      { key: "max_sandbox_commands_per_batch", label: "Sandbox Commands per Batch", min: RUNTIME_CONSTRAINTS.max_sandbox_commands_per_batch.minimum, max: RUNTIME_CONSTRAINTS.max_sandbox_commands_per_batch.maximum, width: "compact" },
       { key: "main_max_turns", label: "Main Max Turns", min: RUNTIME_CONSTRAINTS.main_max_turns.minimum },
-      { key: "subordinate_max_turns", label: "Subordinate Max Turns", min: RUNTIME_CONSTRAINTS.subordinate_max_turns.minimum },
+      { key: "specialist_max_turns", label: "Specialist Max Turns", min: RUNTIME_CONSTRAINTS.specialist_max_turns.minimum },
       { key: "model_stream_idle_timeout_seconds", label: "Stream Idle Timeout", min: RUNTIME_CONSTRAINTS.model_stream_idle_timeout_seconds.minimum },
       { key: "report_retention_seconds", label: "Report Retention Seconds", min: RUNTIME_CONSTRAINTS.report_retention_seconds.minimum },
     ],
@@ -99,12 +100,6 @@ const RUNTIME_FIELD_GROUPS: ConfigFieldGroup<AgentRuntimeConfig>[] = [
       { key: "context_compression_summary_max_tokens", label: "Summary Max Tokens", min: RUNTIME_CONSTRAINTS.context_compression_summary_max_tokens.minimum },
     ],
   },
-];
-
-const POOL_FIELDS: ConfigField<AgentPoolConfig>[] = [
-  { key: "max_size", label: "Max Size", min: POOL_CONSTRAINTS.max_size.minimum, width: "compact" },
-  { key: "ttl_seconds", label: "TTL Seconds", min: POOL_CONSTRAINTS.ttl_seconds.minimum },
-  { key: "sweep_interval_seconds", label: "Sweep Interval Seconds", min: POOL_CONSTRAINTS.sweep_interval_seconds.minimum, width: "compact" },
 ];
 
 const CAPTURE_FIELDS: ConfigField<BehaviorCaptureConfig>[] = [
@@ -144,13 +139,12 @@ function ratioField(
 }
 
 function toFormValue(config: InstanceConfig): ConfigFormValue {
-  if (!config.agent_pool || !config.agent_runtime || !config.behavior_capture || !config.lightrag || !config.threat_automation) {
+  if (!config.agent_runtime || !config.behavior_capture || !config.lightrag || !config.threat_automation) {
     throw new Error("instance config is incomplete");
   }
   const agents = Object.values(config.agents ?? {}).map((agent) => ({ ...agent }));
   return {
     agents,
-    agent_pool: { ...config.agent_pool },
     agent_runtime: { ...config.agent_runtime },
     behavior_capture: { ...config.behavior_capture },
     lightrag: { ...config.lightrag },
@@ -161,7 +155,6 @@ function toFormValue(config: InstanceConfig): ConfigFormValue {
 function cloneFormValue(values: ConfigFormValue): ConfigFormValue {
   return {
     agents: values.agents.map((agent) => ({ ...agent })),
-    agent_pool: { ...values.agent_pool },
     agent_runtime: { ...values.agent_runtime },
     behavior_capture: { ...values.behavior_capture },
     lightrag: { ...values.lightrag },
@@ -170,10 +163,9 @@ function cloneFormValue(values: ConfigFormValue): ConfigFormValue {
 }
 
 function toPayload(values: ConfigFormValue): UpdateInstanceConfigRequest {
-  const agents: NonNullable<UpdateInstanceConfigRequest["agents"]> = {};
+  const agents = {} as UpdateInstanceConfigRequest["agents"];
   values.agents.forEach((agent) => {
-    const code = agent.code.trim();
-    if (!code) return;
+    const code: AgentCode = agent.code;
     agents[code] = {
       base_url: agent.base_url.trim(),
       api_key: agent.api_key.trim(),
@@ -184,7 +176,6 @@ function toPayload(values: ConfigFormValue): UpdateInstanceConfigRequest {
   });
   return {
     agents,
-    agent_pool: values.agent_pool,
     agent_runtime: values.agent_runtime,
     behavior_capture: values.behavior_capture,
     lightrag: {
@@ -244,7 +235,7 @@ export function SystemConfigPage() {
     const agentCount = values?.agents.length ?? 0;
     return [
       { label: "Agents", value: agentCount },
-      { label: "Pool Size", value: values?.agent_pool.max_size ?? "-" },
+      { label: "Specialist Turns", value: values?.agent_runtime.specialist_max_turns ?? "-" },
       { label: "Main Turns", value: values?.agent_runtime.main_max_turns ?? "-" },
       {
         label: "Threat Automation",
@@ -252,10 +243,6 @@ export function SystemConfigPage() {
       },
     ];
   }, [values]);
-
-  const updatePool = (patch: Partial<AgentPoolConfig>) => {
-    setValues((current) => current && { ...current, agent_pool: { ...current.agent_pool, ...patch } });
-  };
 
   const updateRuntime = (patch: Partial<AgentRuntimeConfig>) => {
     setValues((current) => current && { ...current, agent_runtime: { ...current.agent_runtime, ...patch } });
@@ -273,7 +260,7 @@ export function SystemConfigPage() {
     setValues((current) => current && { ...current, threat_automation: { ...current.threat_automation, ...patch } });
   };
 
-  const updateAgent = (code: string, patch: AgentRuntimePatch) => {
+  const updateAgent = (code: AgentCode, patch: AgentRuntimePatch) => {
     setValues((current) => current && {
       ...current,
       agents: current.agents.map((agent) => (agent.code === code ? { ...agent, ...patch } : agent)),
@@ -344,10 +331,6 @@ export function SystemConfigPage() {
             <div className="system-config-layout">
               <ConfigPanel icon={<Settings size={18} />} title="Runtime">
                 <RuntimeConfigEditor value={values.agent_runtime} onChange={updateRuntime} />
-              </ConfigPanel>
-
-              <ConfigPanel icon={<RotateCcw size={18} />} title="Agent Pool">
-                <ConfigFieldGrid fill fields={POOL_FIELDS} values={values.agent_pool} onChange={updatePool} />
               </ConfigPanel>
 
               <ConfigPanel icon={<RadioTower size={18} />} title="Behavior Capture">

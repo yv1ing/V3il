@@ -6,6 +6,7 @@ from functools import wraps
 from typing import Concatenate, ParamSpec, TypeVar
 
 from sqlalchemy import text
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from database import get_async_session
 
@@ -15,13 +16,20 @@ P = ParamSpec("P")
 R = TypeVar("R")
 
 
+async def lock_sandbox_container_mutation(
+    session: AsyncSession,
+    container_id: int,
+) -> None:
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(:namespace, :container_id)"),
+        {"namespace": _LOCK_NAMESPACE, "container_id": container_id},
+    )
+
+
 @asynccontextmanager
 async def sandbox_container_mutation_lock(container_id: int) -> AsyncIterator[None]:
     async with get_async_session() as session, session.begin():
-        await session.execute(
-            text("SELECT pg_advisory_xact_lock(:namespace, :container_id)"),
-            {"namespace": _LOCK_NAMESPACE, "container_id": container_id},
-        )
+        await lock_sandbox_container_mutation(session, container_id)
         yield
 
 

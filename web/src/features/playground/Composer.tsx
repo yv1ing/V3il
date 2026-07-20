@@ -6,21 +6,24 @@ import {
   AGENT_IMAGE_DETAIL,
   AGENT_IMAGE_MEDIA_TYPE_VALUES,
   AGENT_INPUT_PART_TYPE,
-  MAX_AGENT_IMAGES,
-  MAX_AGENT_IMAGE_BYTES,
-  MAX_AGENT_TOTAL_IMAGE_BYTES,
+  AGENT_INPUT_MAXIMUM_IMAGES,
+  AGENT_INPUT_MAXIMUM_IMAGE_BYTES,
+  AGENT_INPUT_MAXIMUM_TOTAL_IMAGE_BYTES,
 } from "../../shared/api/generated/constants";
-import type { AgentImageInputPart, AgentInfo, AgentInputPart } from "../../shared/api/types";
+import type { AgentCode, AgentImageInputPart, AgentInfo, AgentInputPart } from "../../shared/api/types";
 import { cx } from "../../shared/lib/className";
 
 type ComposerProps = {
   streaming: boolean;
   disabled?: boolean;
+  disabledReason?: string;
   agents: AgentInfo[];
-  activeAgentCode: string;
+  activeAgentCode: AgentCode | "";
   agentSwitchDisabled?: boolean;
+  agentSwitchDisabledReason?: string;
+  canInterrupt?: boolean;
   canCancelAll?: boolean;
-  onPickAgent: (code: string) => void;
+  onPickAgent: (code: AgentCode) => void;
   onSend: (content: AgentInputPart[]) => Promise<boolean>;
   onInterrupt: () => void;
   onCancelAll: () => void;
@@ -28,15 +31,18 @@ type ComposerProps = {
 
 const ACCEPTED_IMAGE_TYPES = new Set<string>(AGENT_IMAGE_MEDIA_TYPE_VALUES);
 const ACCEPTED_IMAGE_TYPES_ATTRIBUTE = AGENT_IMAGE_MEDIA_TYPE_VALUES.join(",");
-const MAX_AGENT_IMAGE_SIZE_LABEL = formatBinaryMegabytes(MAX_AGENT_IMAGE_BYTES);
-const MAX_AGENT_TOTAL_IMAGE_SIZE_LABEL = formatBinaryMegabytes(MAX_AGENT_TOTAL_IMAGE_BYTES);
+const MAX_AGENT_IMAGE_SIZE_LABEL = formatBinaryMegabytes(AGENT_INPUT_MAXIMUM_IMAGE_BYTES);
+const MAX_AGENT_TOTAL_IMAGE_SIZE_LABEL = formatBinaryMegabytes(AGENT_INPUT_MAXIMUM_TOTAL_IMAGE_BYTES);
 
 export function Composer({
   streaming,
   disabled = false,
+  disabledReason = "Conversation is unavailable",
   agents,
   activeAgentCode,
   agentSwitchDisabled = false,
+  agentSwitchDisabledReason = "Agent switching is unavailable",
+  canInterrupt = false,
   canCancelAll = false,
   onPickAgent,
   onSend,
@@ -109,9 +115,9 @@ export function Composer({
     if (addingImagesRef.current) return;
     const imageFiles = files.filter((file) => ACCEPTED_IMAGE_TYPES.has(file.type));
     if (!imageFiles.length) return;
-    const available = Math.max(0, MAX_AGENT_IMAGES - images.length);
+    const available = Math.max(0, AGENT_INPUT_MAXIMUM_IMAGES - images.length);
     if (available === 0) {
-      Toast.warning(`At most ${MAX_AGENT_IMAGES} images allowed`);
+      Toast.warning(`At most ${AGENT_INPUT_MAXIMUM_IMAGES} images allowed`);
       return;
     }
     addingImagesRef.current = true;
@@ -120,11 +126,11 @@ export function Composer({
       const currentBytes = images.reduce((total, image) => total + base64DecodedSize(image.data), 0);
       let nextBytes = 0;
       for (const file of imageFiles.slice(0, available)) {
-        if (file.size > MAX_AGENT_IMAGE_BYTES) {
+        if (file.size > AGENT_INPUT_MAXIMUM_IMAGE_BYTES) {
           Toast.warning(`${file.name} exceeds ${MAX_AGENT_IMAGE_SIZE_LABEL}, skipped`);
           continue;
         }
-        if (currentBytes + nextBytes + file.size > MAX_AGENT_TOTAL_IMAGE_BYTES) {
+        if (currentBytes + nextBytes + file.size > AGENT_INPUT_MAXIMUM_TOTAL_IMAGE_BYTES) {
           Toast.warning(`Total image size exceeds ${MAX_AGENT_TOTAL_IMAGE_SIZE_LABEL}, some images skipped`);
           continue;
         }
@@ -136,7 +142,7 @@ export function Composer({
         }
       }
       if (next.length) {
-        setImages((current) => [...current, ...next].slice(0, MAX_AGENT_IMAGES));
+        setImages((current) => [...current, ...next].slice(0, AGENT_INPUT_MAXIMUM_IMAGES));
       }
     } finally {
       addingImagesRef.current = false;
@@ -162,8 +168,6 @@ export function Composer({
     setPickerOpen((next) => !next);
     focusTextarea();
   };
-
-  const agentSwitchDisabledReason = "Finish or cancel running subagent tasks before switching agents";
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (pickerOpen) {
@@ -196,7 +200,7 @@ export function Composer({
 
     if (event.key !== "Enter" || event.shiftKey) return;
     event.preventDefault();
-    if (streaming) {
+    if (streaming && canInterrupt) {
       onInterrupt();
     } else {
       void submit();
@@ -204,7 +208,13 @@ export function Composer({
   };
 
   const action = streaming
-    ? { icon: <Square size={16} />, type: "danger" as const, title: "Stop", onClick: onInterrupt, disabled: false }
+    ? {
+        icon: <Square size={16} />,
+        type: "danger" as const,
+        title: canInterrupt ? "Stop" : "Run cannot be interrupted in its current state",
+        onClick: onInterrupt,
+        disabled: !canInterrupt,
+      }
     : {
         icon: <Send size={16} />,
         type: "primary" as const,
@@ -256,7 +266,7 @@ export function Composer({
             disabled={disabled && !streaming}
             placeholder={
               disabled
-                ? "Loading conversation history…"
+                ? disabledReason
                 : streaming
                   ? "Streaming response… press Enter or stop to interrupt"
                   : "Send a message · Shift+Enter for newline"
@@ -293,7 +303,7 @@ export function Composer({
                 theme="borderless"
                 type="tertiary"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={disabled || streaming || images.length >= MAX_AGENT_IMAGES}
+                disabled={disabled || streaming || images.length >= AGENT_INPUT_MAXIMUM_IMAGES}
                 aria-label="Attach image"
                 title="Attach image"
               />
@@ -313,9 +323,9 @@ export function Composer({
                 theme="borderless"
                 type="danger"
                 onClick={onCancelAll}
-                disabled={disabled || !canCancelAll}
-                aria-label="Cancel all running subagent tasks"
-                title={canCancelAll ? "Cancel all running subagent tasks" : "No running subagent tasks"}
+                disabled={!canCancelAll}
+                aria-label="Cancel all active runs"
+                title={canCancelAll ? "Cancel all active runs" : "No active runs"}
               />
             </div>
           </div>

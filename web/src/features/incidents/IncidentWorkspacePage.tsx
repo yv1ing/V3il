@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { agentSessionPath } from "../../app/routePaths";
 import { listAgents } from "../../shared/api/agents";
 import { showApiError, showApiSuccess } from "../../shared/api/feedback";
 import { collectAllPages } from "../../shared/api/pagination";
@@ -30,11 +31,10 @@ import {
   activateInvestigationTask,
   blockInvestigationTask,
   createInvestigationTask,
-  createThreatIncidentSession,
+  ensureThreatIncidentSession,
   downloadThreatIncidentReport,
   getThreatIncidentTimeline,
   getThreatIncidentWorkspace,
-  listThreatIncidentSessions,
   queryAuditEvents,
   queryIncidentBehaviorEvents,
   queryInvestigationEvidence,
@@ -46,12 +46,16 @@ import {
 } from "../../shared/api/threatIncidents";
 import {
   AGENT_CODE,
+  FIELD_CONSTRAINTS,
   INVESTIGATION_REVIEW_DECISION,
   INVESTIGATION_TASK_PRIORITY,
   INVESTIGATION_TASK_PRIORITY_VALUES,
   INVESTIGATION_TASK_STATUS,
+  PAGINATION_MAXIMUM_PAGE_SIZE,
+  THREAT_INCIDENT_ACTION,
   THREAT_INCIDENT_STATUS,
   THREAT_INCIDENT_STATUS_TRANSITIONS,
+  THREAT_TIMELINE_ITEM_KIND,
 } from "../../shared/api/generated/constants";
 import type {
   AgentCode,
@@ -64,6 +68,7 @@ import type {
   ThreatIncident,
   ThreatIncidentWorkspace,
   ThreatTimelineItem,
+  ThreatTimelineCursor,
 } from "../../shared/api/types";
 import { AsyncContent } from "../../shared/components/AsyncContent";
 import { BehaviorEvidenceDetails } from "../../shared/components/BehaviorEvidenceDetails";
@@ -88,7 +93,7 @@ type IncidentWorkspaceData = {
   evidence: InvestigationEvidence[];
   audit: AuditEvent[];
   timeline: ThreatTimelineItem[];
-  timelineNextBefore: string | null;
+  timelineCursor: ThreatTimelineCursor | null;
   timelineHasMore: boolean;
   agents: AgentInfo[];
 };
@@ -102,7 +107,7 @@ export function IncidentWorkspacePage() {
   const { incidentId } = useParams();
   const id = Number(incidentId);
   const validIncidentId = Number.isInteger(id) && id > 0 ? id : 0;
-  const { refreshSessions, selectSession } = useAgentSessionContext();
+  const { selectSession, syncSessionSummaries } = useAgentSessionContext();
   const [data, setData] = useState<IncidentWorkspaceData | null>(null);
   const [loading, setLoading] = useState(true);
   const [action, setAction] = useState<string | null>(null);
@@ -116,10 +121,10 @@ export function IncidentWorkspacePage() {
     try {
       const [workspaceResponse, events, tasks, evidence, audit, timelineResponse, agentResponse] = await Promise.all([
         getThreatIncidentWorkspace(validIncidentId),
-        collectAllPages<BehaviorEvent>((page) => queryIncidentBehaviorEvents(validIncidentId, { page, size: 100, keyword: "" })),
-        collectAllPages<InvestigationTask>((page) => queryInvestigationTasks(validIncidentId, { page, size: 100 })),
-        collectAllPages<InvestigationEvidence>((page) => queryInvestigationEvidence(validIncidentId, { page, size: 100 })),
-        collectAllPages<AuditEvent>((page) => queryAuditEvents(validIncidentId, { page, size: 100 })),
+        collectAllPages<BehaviorEvent>((page) => queryIncidentBehaviorEvents(validIncidentId, { page, size: PAGINATION_MAXIMUM_PAGE_SIZE, keyword: "" })),
+        collectAllPages<InvestigationTask>((page) => queryInvestigationTasks(validIncidentId, { page, size: PAGINATION_MAXIMUM_PAGE_SIZE })),
+        collectAllPages<InvestigationEvidence>((page) => queryInvestigationEvidence(validIncidentId, { page, size: PAGINATION_MAXIMUM_PAGE_SIZE })),
+        collectAllPages<AuditEvent>((page) => queryAuditEvents(validIncidentId, { page, size: PAGINATION_MAXIMUM_PAGE_SIZE })),
         getThreatIncidentTimeline(validIncidentId, { limit: 200 }),
         listAgents(),
       ]);
@@ -134,9 +139,9 @@ export function IncidentWorkspacePage() {
         evidence,
         audit,
         timeline: timelineResponse.data?.items ?? [],
-        timelineNextBefore: timelineResponse.data?.next_before ?? null,
+        timelineCursor: timelineResponse.data?.next_cursor ?? null,
         timelineHasMore: timelineResponse.data?.has_more ?? false,
-        agents: agentResponse.data?.items ?? [],
+        agents: agentResponse.items,
       });
     } catch (error) {
       showApiError(error);
@@ -153,16 +158,12 @@ export function IncidentWorkspacePage() {
     if (!validIncidentId || action) return;
     setAction("console");
     try {
-      const sessionResponse = await listThreatIncidentSessions(validIncidentId, { page: 1, size: 100 });
-      let sessionId = sessionResponse.data?.items[0]?.session_id;
-      if (!sessionId) {
-        const created = await createThreatIncidentSession(validIncidentId);
-        sessionId = created.data?.session_id;
-      }
-      if (!sessionId) throw new Error("Incident Console session could not be created");
-      await refreshSessions();
-      selectSession(sessionId);
-      navigate("/playground", { state: { sessionId } });
+      const response = await ensureThreatIncidentSession(validIncidentId);
+      const session = response.data;
+      if (!session) throw new Error("Incident Console session could not be ensured");
+      syncSessionSummaries([session]);
+      selectSession(session.id);
+      navigate(agentSessionPath(session.id));
     } catch (error) {
       showApiError(error);
       setAction(null);
@@ -202,11 +203,13 @@ export function IncidentWorkspacePage() {
   };
 
   const loadOlderTimeline = async () => {
-    if (!data?.timelineNextBefore || action) return;
+    if (!data?.timelineCursor || action) return;
     setAction("timeline");
     try {
       const response = await getThreatIncidentTimeline(validIncidentId, {
-        before: data.timelineNextBefore,
+        cursor_at: data.timelineCursor.occurred_at,
+        cursor_kind: data.timelineCursor.kind,
+        cursor_id: data.timelineCursor.object_id,
         limit: 200,
       });
       const timeline = response.data;
@@ -214,7 +217,7 @@ export function IncidentWorkspacePage() {
         setData((current) => current ? {
           ...current,
           timeline: [...current.timeline, ...timeline.items],
-          timelineNextBefore: timeline.next_before ?? null,
+          timelineCursor: timeline.next_cursor ?? null,
           timelineHasMore: timeline.has_more,
         } : current);
       }
@@ -492,7 +495,7 @@ function InvestigationTab({ tasks, evidence, action, onCreate, onActivate, onOpe
               <article key={item.id}>
                 <header><strong>{item.statement}</strong><span>Task #{item.task_id}</span></header>
                 <p>{item.analysis}</p>
-                <small>{item.behavior_event_ids.length} behavior links · {item.related_evidence_ids.length} related evidence · {formatDateTime(item.created_at)}</small>
+                <small>{item.behavior_links.length} behavior links · {item.evidence_relations.length} evidence relations · {formatDateTime(item.created_at)}</small>
               </article>
             ))}
           </div>
@@ -644,7 +647,7 @@ function InvestigationTaskModal({ open, saving, agents, events, tasks, onCancel,
         });
       }}
     >
-      <FormField label="Title"><Input value={values.title} maxLength={255} onChange={(title) => setValues((current) => ({ ...current, title }))} /></FormField>
+      <FormField label="Title"><Input value={values.title} maxLength={FIELD_CONSTRAINTS.CreateInvestigationTaskRequest.title.maxLength} onChange={(title) => setValues((current) => ({ ...current, title }))} /></FormField>
       <div className="form-grid-two">
         <FormField label="Priority">
           <Select value={values.priority} optionList={INVESTIGATION_TASK_PRIORITY_VALUES.map((value) => ({ label: formatEnumLabel(value), value }))} onChange={(priority) => typeof priority === "string" && setValues((current) => ({ ...current, priority }))} />
@@ -664,8 +667,8 @@ function InvestigationTaskModal({ open, saving, agents, events, tasks, onCancel,
           onChange={(value) => setValues((current) => ({ ...current, behavior_event_ids: numberSelection(value) }))}
         />
       </FormField>
-      <FormField label="Objective"><TextArea value={values.objective} rows={4} maxLength={4000} onChange={(objective) => setValues((current) => ({ ...current, objective }))} /></FormField>
-      <FormField label="Completion criteria"><TextArea value={values.completion_criteria} rows={4} maxLength={4000} onChange={(completion_criteria) => setValues((current) => ({ ...current, completion_criteria }))} /></FormField>
+      <FormField label="Objective"><TextArea value={values.objective} rows={4} maxLength={FIELD_CONSTRAINTS.CreateInvestigationTaskRequest.objective.maxLength} onChange={(objective) => setValues((current) => ({ ...current, objective }))} /></FormField>
+      <FormField label="Completion criteria"><TextArea value={values.completion_criteria} rows={4} maxLength={FIELD_CONSTRAINTS.CreateInvestigationTaskRequest.completion_criteria.maxLength} onChange={(completion_criteria) => setValues((current) => ({ ...current, completion_criteria }))} /></FormField>
     </ResourceModal>
   );
 }
@@ -689,7 +692,7 @@ function TaskActionModal({ state, saving, onCancel, onSubmit }: {
   return (
     <ResourceModal open title={current.title} titleIcon={<ClipboardList size={17} />} saving={saving} submitLabel={current.submit} submitDisabled={!text.trim()} onCancel={onCancel} onSubmit={() => onSubmit(state.task, state.kind, text.trim())}>
       <FormField label="Task"><Input value={`#${state.task.id} · ${state.task.title}`} disabled /></FormField>
-      <FormField label={current.field}><TextArea value={text} rows={6} maxLength={state.kind === "submit" ? 8000 : 4000} onChange={setText} /></FormField>
+      <FormField label={current.field}><TextArea value={text} rows={6} maxLength={state.kind === "submit" ? FIELD_CONSTRAINTS.SubmitInvestigationTaskRequest.result_summary.maxLength : state.kind === "block" ? FIELD_CONSTRAINTS.BlockInvestigationTaskRequest.reason.maxLength : FIELD_CONSTRAINTS.ReviewInvestigationTaskRequest.reason.maxLength} onChange={setText} /></FormField>
     </ResourceModal>
   );
 }
@@ -705,7 +708,7 @@ function TransitionModal({ state, saving, onCancel, onSubmit }: {
   if (!state) return null;
   return (
     <ResourceModal open title={`Transition to ${formatEnumLabel(state.target)}`} titleIcon={<ShieldAlert size={17} />} saving={saving} submitLabel="Transition" submitDisabled={!reason.trim()} onCancel={onCancel} onSubmit={() => onSubmit(state, reason.trim())}>
-      <FormField label="Reason"><TextArea value={reason} rows={5} maxLength={4000} onChange={setReason} /></FormField>
+      <FormField label="Reason"><TextArea value={reason} rows={5} maxLength={FIELD_CONSTRAINTS.TransitionThreatIncidentRequest.reason.maxLength} onChange={setReason} /></FormField>
     </ResourceModal>
   );
 }
@@ -724,21 +727,48 @@ function numberSelection(value: unknown): number[] {
 
 function transitionAction(current: ThreatIncident["status"], target: ThreatIncident["status"]): ThreatIncidentAction {
   if (target === THREAT_INCIDENT_STATUS.INVESTIGATING) {
-    return current === THREAT_INCIDENT_STATUS.OPEN ? "start-investigation" : "reopen";
+    return current === THREAT_INCIDENT_STATUS.OPEN
+      ? THREAT_INCIDENT_ACTION.START_INVESTIGATION
+      : THREAT_INCIDENT_ACTION.REOPEN;
   }
-  if (target === THREAT_INCIDENT_STATUS.ENGAGING) return "start-engagement";
-  if (target === THREAT_INCIDENT_STATUS.FINALIZING) return "finalize";
-  return "close";
+  if (target === THREAT_INCIDENT_STATUS.ENGAGING) return THREAT_INCIDENT_ACTION.START_ENGAGEMENT;
+  if (target === THREAT_INCIDENT_STATUS.FINALIZING) return THREAT_INCIDENT_ACTION.FINALIZE;
+  return THREAT_INCIDENT_ACTION.CLOSE;
 }
 
 function timelineTitle(item: ThreatTimelineItem): string {
-  const value = item.payload.summary ?? item.payload.title ?? item.payload.statement ?? item.payload.action;
-  return typeof value === "string" && value ? value : formatEnumLabel(item.kind);
+  switch (item.kind) {
+    case THREAT_TIMELINE_ITEM_KIND.BEHAVIOR_EVENT:
+      return item.payload.summary || item.payload.action || formatEnumLabel(item.kind);
+    case THREAT_TIMELINE_ITEM_KIND.AUDIT_EVENT:
+      return item.payload.summary || formatEnumLabel(item.payload.kind);
+    case THREAT_TIMELINE_ITEM_KIND.INVESTIGATION_TASK:
+      return item.payload.title;
+    case THREAT_TIMELINE_ITEM_KIND.INVESTIGATION_EVIDENCE:
+      return item.payload.statement;
+    case THREAT_TIMELINE_ITEM_KIND.DECEPTION_REVISION:
+      return `Revision v${item.payload.version}: ${item.payload.target_persona}`;
+  }
 }
 
 function timelineDetail(item: ThreatTimelineItem): string {
-  const value = item.payload.description ?? item.payload.analysis ?? item.payload.rationale ?? item.payload.result_summary;
+  const value = timelineDetailText(item);
   if (typeof value === "string" && value) return value;
   const compact = JSON.stringify(item.payload);
   return compact.length > 800 ? `${compact.slice(0, 800)}…` : compact;
+}
+
+function timelineDetailText(item: ThreatTimelineItem): string {
+  switch (item.kind) {
+    case THREAT_TIMELINE_ITEM_KIND.BEHAVIOR_EVENT:
+      return item.payload.command_line || item.payload.file_path || item.payload.summary;
+    case THREAT_TIMELINE_ITEM_KIND.AUDIT_EVENT:
+      return JSON.stringify(item.payload.details);
+    case THREAT_TIMELINE_ITEM_KIND.INVESTIGATION_TASK:
+      return item.payload.result_summary || item.payload.objective;
+    case THREAT_TIMELINE_ITEM_KIND.INVESTIGATION_EVIDENCE:
+      return item.payload.analysis;
+    case THREAT_TIMELINE_ITEM_KIND.DECEPTION_REVISION:
+      return item.payload.rationale;
+  }
 }

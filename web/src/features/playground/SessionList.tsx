@@ -1,13 +1,14 @@
 import { Button, Input, Popconfirm } from "@douyinfe/semi-ui";
-import { Edit3, MessageCircle, ShieldAlert, Trash2 } from "lucide-react";
-import { memo, useMemo, useState, type ReactNode } from "react";
+import { Archive, Edit3, MessageCircle } from "lucide-react";
+import { memo, useState } from "react";
 import { updateAgentSessionTitle } from "../../shared/api/agentSessions";
+import { showApiError } from "../../shared/api/feedback";
+import { FIELD_CONSTRAINTS } from "../../shared/api/generated/constants";
 import type { AgentSessionSummary } from "../../shared/api/types";
 import { AsyncContent } from "../../shared/components/AsyncContent";
 import { EmptyState } from "../../shared/components/EmptyState";
 import { FormField } from "../../shared/components/FormField";
 import { ResourceModal } from "../../shared/components/ResourceModal";
-import { useResourceSubmit } from "../../shared/hooks/useResourceSubmit";
 import { cx } from "../../shared/lib/className";
 import { UI_TEXT } from "../../shared/lib/uiText";
 
@@ -18,19 +19,17 @@ type SessionListProps = {
   hasMore: boolean;
   activeSessionId: string | null;
   onSelect: (sessionId: string) => void;
-  onDelete: (sessionId: string) => void;
+  onArchive: (sessionId: string) => void;
   onRefreshSessions: () => Promise<void>;
   onLoadMoreSessions: () => Promise<void>;
 };
 
 type SessionRowProps = {
   active: boolean;
-  icon: ReactNode;
   session: AgentSessionSummary;
-  titleFallback: string;
   onRename: () => void;
   onSelect: () => void;
-  onDelete: () => void;
+  onArchive: () => void;
 };
 
 export const SessionList = memo(function SessionList({
@@ -40,18 +39,13 @@ export const SessionList = memo(function SessionList({
   hasMore,
   activeSessionId,
   onSelect,
-  onDelete,
+  onArchive,
   onRefreshSessions,
   onLoadMoreSessions,
 }: SessionListProps) {
   const [renameTarget, setRenameTarget] = useState<AgentSessionSummary | null>(null);
   const [renameTitle, setRenameTitle] = useState("");
-  const { saving: renaming, submit } = useResourceSubmit();
-  const groupedSessions = useMemo(() => ({
-    incidents: sessions.filter((session) => session.incident_id != null),
-    chats: sessions.filter((session) => session.incident_id == null),
-  }), [sessions]);
-
+  const [renaming, setRenaming] = useState(false);
   const openRename = (session: AgentSessionSummary) => {
     setRenameTarget(session);
     setRenameTitle(session.title || "");
@@ -60,13 +54,18 @@ export const SessionList = memo(function SessionList({
   const saveRename = async () => {
     const title = renameTitle.trim();
     if (!renameTarget || !title) return;
-    await submit(async () => {
-      const response = await updateAgentSessionTitle(renameTarget.session_id, { title });
+    if (renaming) return;
+    setRenaming(true);
+    try {
+      await updateAgentSessionTitle(renameTarget.id, { title });
       setRenameTarget(null);
       setRenameTitle("");
       await onRefreshSessions();
-      return response;
-    });
+    } catch (error) {
+      showApiError(error);
+    } finally {
+      setRenaming(false);
+    }
   };
 
   return (
@@ -82,23 +81,11 @@ export const SessionList = memo(function SessionList({
         >
           <>
             <SessionGroup
-              label="Incident investigations"
-              sessions={groupedSessions.incidents}
-              icon={<ShieldAlert size={14} />}
-              titleFallback="Incident investigation"
-              activeSessionId={activeSessionId}
-              onSelect={onSelect}
-              onDelete={onDelete}
-              onRename={openRename}
-            />
-            <SessionGroup
               label="Operator chats"
-              sessions={groupedSessions.chats}
-              icon={<MessageCircle size={14} />}
-              titleFallback="Untitled session"
+              sessions={sessions}
               activeSessionId={activeSessionId}
               onSelect={onSelect}
-              onDelete={onDelete}
+              onArchive={onArchive}
               onRename={openRename}
             />
             {hasMore ? (
@@ -126,7 +113,7 @@ export const SessionList = memo(function SessionList({
         onCancel={() => setRenameTarget(null)}
       >
         <FormField label="Session Title">
-          <Input autoFocus maxLength={80} value={renameTitle} onChange={setRenameTitle} />
+          <Input autoFocus maxLength={FIELD_CONSTRAINTS.UpdateAgentSessionTitleRequest.title.maxLength} value={renameTitle} onChange={setRenameTitle} />
         </FormField>
       </ResourceModal>
     </div>
@@ -140,7 +127,7 @@ function areSessionListPropsEqual(previous: SessionListProps, next: SessionListP
     || previous.hasMore !== next.hasMore
     || previous.activeSessionId !== next.activeSessionId
     || previous.onSelect !== next.onSelect
-    || previous.onDelete !== next.onDelete
+    || previous.onArchive !== next.onArchive
     || previous.onRefreshSessions !== next.onRefreshSessions
     || previous.onLoadMoreSessions !== next.onLoadMoreSessions
     || previous.sessions.length !== next.sessions.length
@@ -150,30 +137,26 @@ function areSessionListPropsEqual(previous: SessionListProps, next: SessionListP
   return previous.sessions.every((session, index) => {
     const nextSession = next.sessions[index];
     return nextSession != null
-      && session.session_id === nextSession.session_id
+      && session.id === nextSession.id
       && session.session_type === nextSession.session_type
-      && session.incident_id === nextSession.incident_id
-      && session.title === nextSession.title;
+      && session.title === nextSession.title
+      && session.capabilities.can_archive === nextSession.capabilities.can_archive;
   });
 }
 
 function SessionGroup({
   label,
   sessions,
-  icon,
-  titleFallback,
   activeSessionId,
   onSelect,
-  onDelete,
+  onArchive,
   onRename,
 }: {
   label: string;
   sessions: AgentSessionSummary[];
-  icon: ReactNode;
-  titleFallback: string;
   activeSessionId: string | null;
   onSelect: (sessionId: string) => void;
-  onDelete: (sessionId: string) => void;
+  onArchive: (sessionId: string) => void;
   onRename: (session: AgentSessionSummary) => void;
 }) {
   if (sessions.length === 0) return null;
@@ -182,14 +165,12 @@ function SessionGroup({
       <div className="session-group-label">{label}</div>
       {sessions.map((session) => (
         <SessionRow
-          key={session.session_id}
-          active={session.session_id === activeSessionId}
-          icon={icon}
+          key={session.id}
+          active={session.id === activeSessionId}
           session={session}
-          titleFallback={titleFallback}
           onRename={() => onRename(session)}
-          onSelect={() => onSelect(session.session_id)}
-          onDelete={() => onDelete(session.session_id)}
+          onSelect={() => onSelect(session.id)}
+          onArchive={() => onArchive(session.id)}
         />
       ))}
     </section>
@@ -198,21 +179,28 @@ function SessionGroup({
 
 function SessionRow({
   active,
-  icon,
   session,
-  titleFallback,
   onRename,
   onSelect,
-  onDelete,
+  onArchive,
 }: SessionRowProps) {
-  const title = session.title || titleFallback;
+  const title = session.title || "Untitled session";
+  const archiveButton = (
+    <Button
+      icon={<Archive size={14} />}
+      theme="borderless"
+      type="danger"
+      size="small"
+      aria-label={`Archive ${title}`}
+      disabled={!session.capabilities.can_archive}
+    />
+  );
   return (
     <div className={cx("session-row", active && "session-row-active")}>
       <button type="button" className="session-row-main" onClick={onSelect}>
-        <span className="session-row-icon">{icon}</span>
+        <span className="session-row-icon"><MessageCircle size={14} /></span>
         <span className="session-row-body">
           <span className="session-row-title">{title}</span>
-          {session.incident_id ? <span className="session-row-context">Incident {session.incident_id}</span> : null}
         </span>
       </button>
       <Button
@@ -223,21 +211,17 @@ function SessionRow({
         aria-label={`Edit ${title}`}
         onClick={onRename}
       />
-      <Popconfirm
-        title="Delete session"
-        content="Permanently delete this conversation?"
-        okType="danger"
-        cancelText={UI_TEXT.cancel}
-        onConfirm={onDelete}
-      >
-        <Button
-          icon={<Trash2 size={14} />}
-          theme="borderless"
-          type="danger"
-          size="small"
-          aria-label={`Delete ${title}`}
-        />
-      </Popconfirm>
+      {session.capabilities.can_archive ? (
+        <Popconfirm
+          title="Archive session"
+          content="Archive this conversation?"
+          okType="danger"
+          cancelText={UI_TEXT.cancel}
+          onConfirm={onArchive}
+        >
+          {archiveButton}
+        </Popconfirm>
+      ) : archiveButton}
     </div>
   );
 }

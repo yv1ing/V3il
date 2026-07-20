@@ -7,13 +7,14 @@ from fastapi import Depends, HTTPException
 from sqlmodel import select
 from starlette.datastructures import Headers
 from starlette.requests import Request
-from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from config import get_config
 from database import get_async_session
 from model.system_user.users import SystemUser
-from schema.common.responses import CommonResponse
+from middleware.common.response import problem_response
+from schema.common.problems import ProblemDetails
+from schema.common.resources import ResourceLifecycleStatus
 from schema.system_user.users import SystemUserRole
 
 
@@ -66,18 +67,22 @@ class JwtAuthMiddleware:
         try:
             token_user = decode_access_token(token)
         except jwt.ExpiredSignatureError:
-            await _error_response(HTTPStatus.UNAUTHORIZED, "token expired")(scope, receive, send)
+            await _error_response(scope, "token_expired", "The access token has expired.")(scope, receive, send)
             return
         except jwt.InvalidTokenError:
-            await _error_response(HTTPStatus.UNAUTHORIZED, "invalid token")(scope, receive, send)
+            await _error_response(scope, "invalid_token", "The access token is invalid.")(scope, receive, send)
             return
         if token_user is None:
-            await _error_response(HTTPStatus.UNAUTHORIZED, "invalid token payload")(scope, receive, send)
+            await _error_response(scope, "invalid_token_payload", "The access token payload is invalid.")(scope, receive, send)
             return
 
         user = await resolve_current_user(token_user)
         if user is None:
-            await _error_response(HTTPStatus.UNAUTHORIZED, "access token user no longer exists")(scope, receive, send)
+            await _error_response(
+                scope,
+                "token_subject_not_found",
+                "The access token subject no longer exists.",
+            )(scope, receive, send)
             return
 
         scope.setdefault("state", {})["system_user"] = user
@@ -121,7 +126,10 @@ async def resolve_current_user(token_user: AuthUser) -> AuthUser | None:
             SystemUser.role,
             SystemUser.email,
             SystemUser.username,
-        ).where(SystemUser.id == token_user.id))).one_or_none()
+        ).where(
+            SystemUser.id == token_user.id,
+            SystemUser.status == ResourceLifecycleStatus.ACTIVE,
+        ))).one_or_none()
     if user is None:
         return None
     user_id, role, email, username = user
@@ -146,10 +154,16 @@ async def require_admin(user: AuthUser = Depends(require_user)) -> AuthUser:
     return user
 
 
-def _error_response(status_code: HTTPStatus, message: str) -> JSONResponse:
-    return JSONResponse(
-        status_code=status_code.value,
-        content=CommonResponse(code=status_code.value, message=message).model_dump(),
+def _error_response(scope: Scope, error_code: str, detail: str):
+    return problem_response(
+        ProblemDetails(
+            type=f"https://v3il.dev/problems/{error_code.replace('_', '-')}",
+            title="Unauthorized",
+            status=HTTPStatus.UNAUTHORIZED,
+            detail=detail,
+            instance=str(scope.get("path") or ""),
+            error_code=error_code,
+        )
     )
 
 

@@ -37,15 +37,7 @@ cd ..
 
 Prepare the same image on each Managed Host that may run a deception environment, or distribute it through the team's existing image pipeline.
 
-## 3. Start V3il
-
-Development deployment:
-
-```bash
-docker compose -f docker-compose.dev.yml up -d --build
-```
-
-Long-running deployment:
+## 3. Start The Platform
 
 ```bash
 docker compose -f docker-compose.prod.yml up -d --build

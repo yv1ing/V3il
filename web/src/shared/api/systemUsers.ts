@@ -3,11 +3,11 @@ import { buildQuery } from "./query";
 import type {
   CreateSystemUserRequest,
   CreateSystemUserResponse,
-  DeleteSystemUserResponse,
   LoginRequest,
   LoginResponse,
   QuerySystemUsersParams,
   QuerySystemUsersResponse,
+  RetireSystemUserResponse,
   SystemUserPathParams,
   UpdateSystemUserRequest,
   UpdateSystemUserResponse,
@@ -27,6 +27,6 @@ export const createSystemUser = defineJsonEndpoint<[payload: CreateSystemUserReq
 export const updateSystemUser = defineJsonEndpoint<
   [id: SystemUserPathParams["id"], payload: UpdateSystemUserRequest], UpdateSystemUserResponse
 >("PATCH", (id) => `${SYSTEM_USERS_PATH}/${id}`, (_, payload) => payload);
-export const deleteSystemUser = defineJsonEndpoint<[id: SystemUserPathParams["id"]], DeleteSystemUserResponse>(
-  "DELETE", (id) => `${SYSTEM_USERS_PATH}/${id}`,
+export const retireSystemUser = defineJsonEndpoint<[id: SystemUserPathParams["id"]], RetireSystemUserResponse>(
+  "POST", (id) => `${SYSTEM_USERS_PATH}/${id}/retire`,
 );

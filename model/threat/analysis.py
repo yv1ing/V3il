@@ -11,7 +11,8 @@ from schema.threat.analysis import (
     IntentAssessmentStatus,
 )
 from schema.threat.incidents import ThreatConfidence, ThreatSeverity
-from utils.sqlalchemy import enum_value_type
+from utils.sqlalchemy import enum_value_type, utc_datetime_column
+from utils.time import utc_now
 
 
 class AnalysisRecord(SQLModel, table=True):
@@ -37,7 +38,7 @@ class AnalysisRecord(SQLModel, table=True):
     )
 
     id: int | None = Field(default=None, primary_key=True)
-    incident_id: int = Field(foreign_key="threat_incidents.id", index=True, ondelete="CASCADE")
+    incident_id: int = Field(foreign_key="threat_incidents.id", index=True, ondelete="RESTRICT")
     kind: AnalysisKind = Field(
         sa_column=Column(enum_value_type(AnalysisKind, length=32), nullable=False, index=True)
     )
@@ -56,13 +57,13 @@ class AnalysisRecord(SQLModel, table=True):
     )
     created_by_agent_code: str = Field(default="", index=True)
     created_from_session_id: str = Field(default="", index=True)
-    created_at: datetime = Field(default_factory=datetime.now)
+    created_at: datetime = Field(default_factory=utc_now, sa_column=utc_datetime_column())
 
 
 class AnalysisEvidenceLink(SQLModel, table=True):
     __tablename__ = "analysis_evidence_links"
 
-    analysis_id: int = Field(foreign_key="analysis_records.id", primary_key=True, ondelete="CASCADE")
+    analysis_id: int = Field(foreign_key="analysis_records.id", primary_key=True, ondelete="RESTRICT")
     evidence_id: int = Field(
         foreign_key="investigation_evidence.id",
         primary_key=True,
@@ -74,7 +75,7 @@ class AnalysisEvidenceLink(SQLModel, table=True):
 class IntentAssessment(SQLModel, table=True):
     __tablename__ = "intent_assessments"
 
-    analysis_id: int = Field(foreign_key="analysis_records.id", primary_key=True, ondelete="CASCADE")
+    analysis_id: int = Field(foreign_key="analysis_records.id", primary_key=True, ondelete="RESTRICT")
     stage: AttackStage = Field(
         sa_column=Column(enum_value_type(AttackStage, length=32), nullable=False, index=True)
     )
@@ -93,7 +94,7 @@ class IntentAssessment(SQLModel, table=True):
 class AttackerProfile(SQLModel, table=True):
     __tablename__ = "attacker_profiles"
 
-    analysis_id: int = Field(foreign_key="analysis_records.id", primary_key=True, ondelete="CASCADE")
+    analysis_id: int = Field(foreign_key="analysis_records.id", primary_key=True, ondelete="RESTRICT")
     status: AttackerProfileStatus = Field(
         sa_column=Column(enum_value_type(AttackerProfileStatus, length=32), nullable=False, index=True)
     )
@@ -114,7 +115,7 @@ class AttackerProfile(SQLModel, table=True):
 class RiskAssessment(SQLModel, table=True):
     __tablename__ = "risk_assessments"
 
-    analysis_id: int = Field(foreign_key="analysis_records.id", primary_key=True, ondelete="CASCADE")
+    analysis_id: int = Field(foreign_key="analysis_records.id", primary_key=True, ondelete="RESTRICT")
     severity: ThreatSeverity = Field(
         sa_column=Column(enum_value_type(ThreatSeverity, length=32), nullable=False, index=True)
     )

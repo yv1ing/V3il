@@ -39,7 +39,7 @@
 }
 
 .agent-operations-page {
-  grid-template-rows: max-content minmax(0, 0.8fr) minmax(0, 1.2fr);
+  grid-template-rows: max-content minmax(0, 0.7fr) minmax(0, 0.95fr) minmax(0, 1.25fr);
 }
 
 .workspace-page > .async-content,
@@ -1282,6 +1282,187 @@
   gap: 10px;
   padding: 0 12px;
   border-bottom: 1px solid var(--v3-line-soft);
+}
+
+.session-recovery-count {
+  width: max-content;
+  min-width: 42px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 7px;
+  color: var(--v3-danger);
+  background: var(--v3-danger-bg);
+  border: 1px solid var(--v3-danger-border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.session-recovery-count:disabled {
+  color: var(--v3-text-subtle);
+  background: transparent;
+  border-color: transparent;
+  cursor: default;
+}
+
+.agent-recovery-session-select {
+  width: 260px;
+}
+
+.agent-recovery-list {
+  display: grid;
+  align-content: start;
+}
+
+.agent-recovery-row {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-bottom: 1px solid var(--v3-line-soft);
+}
+
+.agent-recovery-row:last-child {
+  border-bottom: 0;
+}
+
+.agent-recovery-row > header {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 30px minmax(180px, 1fr) max-content 150px max-content;
+  align-items: center;
+  gap: 10px;
+}
+
+.agent-recovery-icon {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--v3-accent);
+  background: var(--v3-cyan-bg);
+  border: 1px solid var(--v3-cyan-border);
+  border-radius: 5px;
+}
+
+.agent-recovery-row > header > div,
+.agent-recovery-details > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.agent-recovery-row > header strong {
+  overflow: hidden;
+  color: var(--v3-text-strong);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.agent-recovery-row > header small,
+.agent-recovery-details small {
+  overflow: hidden;
+  color: var(--v3-text-subtle);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 9px;
+}
+
+.agent-recovery-details {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(120px, 0.25fr) minmax(120px, 0.25fr) minmax(260px, 1fr);
+  align-items: start;
+  gap: 10px;
+  padding-left: 40px;
+}
+
+.agent-recovery-details code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+}
+
+.agent-recovery-details pre {
+  max-height: 112px;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  color: var(--v3-text);
+  background: var(--v3-code-bg);
+  border: 1px solid var(--v3-line-soft);
+  border-radius: 4px;
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.agent-recovery-error {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 7px 9px;
+  color: var(--v3-danger);
+  background: var(--v3-danger-bg);
+  border-left: 2px solid var(--v3-danger);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.agent-recovery-resolution {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(220px, 0.65fr) minmax(280px, 1fr) max-content;
+  align-items: end;
+  gap: 10px;
+  margin-left: 40px;
+  padding: 10px;
+  background: var(--v3-surface-muted);
+  border: 1px solid var(--v3-line-soft);
+  border-radius: 5px;
+}
+
+.agent-recovery-fields {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.agent-recovery-fields > label {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.agent-recovery-fields > label > span {
+  color: var(--v3-text-subtle);
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.agent-recovery-mode {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.agent-recovery-resolution > .semi-button:last-child {
+  grid-column: 3;
+}
+
+.agent-recovery-resolution-single {
+  grid-template-columns: minmax(280px, 1fr) max-content;
+}
+
+.agent-recovery-resolution-single > .semi-button:last-child {
+  grid-column: 2;
 }
 
 .session-operations-row:not(.session-operations-head):hover {

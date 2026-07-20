@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, CheckConstraint, Column, Index, JSON, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, Index, JSON, Text, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 from schema.detection.rules import (
@@ -17,7 +17,8 @@ from schema.detection.rules import (
     DetectionRuleVersionStatus,
     ManagedHostSensorStatus,
 )
-from utils.sqlalchemy import enum_value_type
+from utils.sqlalchemy import enum_value_type, utc_datetime_column
+from utils.time import utc_now
 
 
 class ManagedHostSensor(SQLModel, table=True):
@@ -28,7 +29,7 @@ class ManagedHostSensor(SQLModel, table=True):
     )
 
     id: int | None = Field(default=None, primary_key=True)
-    host_id: int = Field(foreign_key="managed_hosts.id", index=True, ondelete="CASCADE")
+    host_id: int = Field(foreign_key="managed_hosts.id", index=True, ondelete="RESTRICT")
     sensor_id: str = Field(max_length=128, index=True)
     capture_interface: str = Field(max_length=128)
     excluded_ports: list[int] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
@@ -42,9 +43,12 @@ class ManagedHostSensor(SQLModel, table=True):
     desired_bundle_hash: str = Field(default="", max_length=64, index=True)
     last_sequence: int = Field(default=0)
     last_error: str = ""
-    last_heartbeat_at: datetime | None = Field(default=None, index=True)
-    created_at: datetime = Field(default_factory=datetime.now)
-    updated_at: datetime = Field(default_factory=datetime.now)
+    last_heartbeat_at: datetime | None = Field(
+        default=None,
+        sa_column=utc_datetime_column(nullable=True, index=True),
+    )
+    created_at: datetime = Field(default_factory=utc_now, sa_column=utc_datetime_column())
+    updated_at: datetime = Field(default_factory=utc_now, sa_column=utc_datetime_column())
 
 
 class DetectionRule(SQLModel, table=True):
@@ -71,13 +75,13 @@ class DetectionRule(SQLModel, table=True):
     scope: DetectionRuleScope = Field(
         sa_column=Column(enum_value_type(DetectionRuleScope, length=32), nullable=False, index=True)
     )
-    host_id: int | None = Field(default=None, foreign_key="managed_hosts.id", index=True, ondelete="CASCADE")
-    environment_id: int | None = Field(default=None, foreign_key="deception_environments.id", index=True, ondelete="CASCADE")
+    host_id: int | None = Field(default=None, foreign_key="managed_hosts.id", index=True, ondelete="RESTRICT")
+    environment_id: int | None = Field(default=None, foreign_key="deception_environments.id", index=True, ondelete="RESTRICT")
     active_version_id: int | None = Field(default=None, index=True)
     created_by_actor_type: str = Field(default="user", max_length=32, index=True)
     created_by_actor_code: str = Field(default="", max_length=128, index=True)
-    created_at: datetime = Field(default_factory=datetime.now)
-    updated_at: datetime = Field(default_factory=datetime.now)
+    created_at: datetime = Field(default_factory=utc_now, sa_column=utc_datetime_column())
+    updated_at: datetime = Field(default_factory=utc_now, sa_column=utc_datetime_column())
 
 
 class DetectionRuleVersion(SQLModel, table=True):
@@ -88,7 +92,7 @@ class DetectionRuleVersion(SQLModel, table=True):
     )
 
     id: int | None = Field(default=None, primary_key=True)
-    rule_id: int = Field(foreign_key="detection_rules.id", index=True, ondelete="CASCADE")
+    rule_id: int = Field(foreign_key="detection_rules.id", index=True, ondelete="RESTRICT")
     version: int = Field(index=True)
     parent_version_id: int | None = Field(default=None, foreign_key="detection_rule_versions.id", ondelete="RESTRICT")
     status: DetectionRuleVersionStatus = Field(
@@ -97,12 +101,12 @@ class DetectionRuleVersion(SQLModel, table=True):
     content: str = Field(sa_column=Column(Text, nullable=False))
     content_sha256: str = Field(max_length=64, index=True)
     validation_result: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
-    replay_result: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
+    replay_result: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
     created_by_actor_type: str = Field(default="user", max_length=32, index=True)
     created_by_actor_code: str = Field(default="", max_length=128, index=True)
     created_from_session_id: str = Field(default="", index=True)
-    created_at: datetime = Field(default_factory=datetime.now)
-    validated_at: datetime | None = None
+    created_at: datetime = Field(default_factory=utc_now, sa_column=utc_datetime_column())
+    validated_at: datetime | None = Field(default=None, sa_column=utc_datetime_column(nullable=True))
 
 
 class DetectionRuleChangeRequest(SQLModel, table=True):
@@ -110,7 +114,7 @@ class DetectionRuleChangeRequest(SQLModel, table=True):
     __table_args__ = (Index("ix_detection_change_status_created", "status", "created_at"),)
 
     id: int | None = Field(default=None, primary_key=True)
-    rule_id: int = Field(foreign_key="detection_rules.id", index=True, ondelete="CASCADE")
+    rule_id: int = Field(foreign_key="detection_rules.id", index=True, ondelete="RESTRICT")
     rule_version_id: int | None = Field(default=None, foreign_key="detection_rule_versions.id", index=True, ondelete="RESTRICT")
     action: DetectionRuleChangeAction = Field(
         sa_column=Column(enum_value_type(DetectionRuleChangeAction, length=32), nullable=False, index=True)
@@ -128,11 +132,12 @@ class DetectionRuleChangeRequest(SQLModel, table=True):
     requested_by_actor_type: str = Field(default="user", max_length=32, index=True)
     requested_by_actor_code: str = Field(default="", max_length=128, index=True)
     requested_from_session_id: str = Field(default="", index=True)
-    decided_by_user_id: int | None = Field(default=None, foreign_key="system_users.id", ondelete="SET NULL")
+    decided_by_user_id: int | None = Field(default=None, foreign_key="system_users.id", ondelete="RESTRICT")
     decision_reason: str = ""
-    created_at: datetime = Field(default_factory=datetime.now)
-    decided_at: datetime | None = None
-    resolved_at: datetime | None = None
+    error: str = ""
+    created_at: datetime = Field(default_factory=utc_now, sa_column=utc_datetime_column())
+    decided_at: datetime | None = Field(default=None, sa_column=utc_datetime_column(nullable=True))
+    resolved_at: datetime | None = Field(default=None, sa_column=utc_datetime_column(nullable=True))
 
 
 class DetectionRuleDeployment(SQLModel, table=True):
@@ -140,21 +145,42 @@ class DetectionRuleDeployment(SQLModel, table=True):
     __table_args__ = (
         UniqueConstraint("change_request_id", "sensor_id", "attempt", name="uq_detection_deployment_attempt"),
         Index("ix_detection_deployments_change_status", "change_request_id", "status"),
+        CheckConstraint(
+            "status != 'active' OR (observed_bundle_hash = target_bundle_hash AND health_snapshot IS NOT NULL)",
+            name="ck_detection_deployment_active_observation",
+        ),
+        CheckConstraint(
+            "status != 'rolled_back' OR "
+            "(rollback_observed_bundle_hash = previous_bundle_hash AND rollback_health_snapshot IS NOT NULL)",
+            name="ck_detection_deployment_rollback_observation",
+        ),
+        CheckConstraint("attempt > 0", name="ck_detection_deployment_attempt"),
+        CheckConstraint(
+            "(started_at IS NULL AND runtime_owner_id = '' AND lease_fencing_token = 0) OR "
+            "(started_at IS NOT NULL AND runtime_owner_id <> '' AND lease_fencing_token > 0)",
+            name="ck_detection_deployment_runtime_owner",
+        ),
     )
 
     id: int | None = Field(default=None, primary_key=True)
-    change_request_id: int = Field(foreign_key="detection_rule_change_requests.id", index=True, ondelete="CASCADE")
+    change_request_id: int = Field(foreign_key="detection_rule_change_requests.id", index=True, ondelete="RESTRICT")
     sensor_id: int = Field(foreign_key="managed_host_sensors.id", index=True, ondelete="RESTRICT")
     status: DetectionRuleDeploymentStatus = Field(
         sa_column=Column(enum_value_type(DetectionRuleDeploymentStatus, length=32), nullable=False, index=True)
     )
     previous_bundle_hash: str = Field(default="", max_length=64)
     target_bundle_hash: str = Field(max_length=64, index=True)
+    observed_bundle_hash: str = Field(default="", max_length=64)
+    health_snapshot: dict | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    rollback_observed_bundle_hash: str = Field(default="", max_length=64)
+    rollback_health_snapshot: dict | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    runtime_owner_id: str = Field(default="", max_length=128)
+    lease_fencing_token: int = Field(default=0, sa_column=Column(BigInteger, nullable=False))
     attempt: int = Field(default=1)
     error: str = ""
-    started_at: datetime | None = None
-    health_checked_at: datetime | None = None
-    resolved_at: datetime | None = None
+    started_at: datetime | None = Field(default=None, sa_column=utc_datetime_column(nullable=True))
+    health_checked_at: datetime | None = Field(default=None, sa_column=utc_datetime_column(nullable=True))
+    resolved_at: datetime | None = Field(default=None, sa_column=utc_datetime_column(nullable=True))
 
 
 class DetectionBundle(SQLModel, table=True):
@@ -162,7 +188,7 @@ class DetectionBundle(SQLModel, table=True):
 
     bundle_hash: str = Field(primary_key=True, max_length=64)
     content: dict[str, Any] = Field(sa_column=Column(JSON, nullable=False))
-    created_at: datetime = Field(default_factory=datetime.now)
+    created_at: datetime = Field(default_factory=utc_now, sa_column=utc_datetime_column())
 
 
 class BehaviorDecision(SQLModel, table=True):
@@ -173,7 +199,7 @@ class BehaviorDecision(SQLModel, table=True):
     )
 
     id: int | None = Field(default=None, primary_key=True)
-    event_id: int = Field(foreign_key="behavior_events.id", index=True, ondelete="CASCADE")
+    event_id: int = Field(foreign_key="behavior_events.id", index=True, ondelete="RESTRICT")
     mode: BehaviorDecisionMode = Field(
         sa_column=Column(enum_value_type(BehaviorDecisionMode, length=16), nullable=False, index=True)
     )
@@ -187,7 +213,10 @@ class BehaviorDecision(SQLModel, table=True):
     matched_rule_versions: list[dict[str, Any]] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
     suppression_rule_versions: list[int] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
     material: bool = Field(default=False, sa_column=Column(Boolean, nullable=False))
-    created_at: datetime = Field(default_factory=datetime.now, index=True)
+    created_at: datetime = Field(
+        default_factory=utc_now,
+        sa_column=utc_datetime_column(index=True),
+    )
 
 
 class BehaviorSignal(SQLModel, table=True):
@@ -198,8 +227,8 @@ class BehaviorSignal(SQLModel, table=True):
     )
 
     id: int | None = Field(default=None, primary_key=True)
-    environment_id: int = Field(foreign_key="deception_environments.id", index=True, ondelete="CASCADE")
-    incident_id: int | None = Field(default=None, foreign_key="threat_incidents.id", index=True, ondelete="SET NULL")
+    environment_id: int = Field(foreign_key="deception_environments.id", index=True, ondelete="RESTRICT")
+    incident_id: int | None = Field(default=None, foreign_key="threat_incidents.id", index=True, ondelete="RESTRICT")
     aggregation_key: str = Field(max_length=512, index=True)
     kind: str = Field(max_length=128, index=True)
     classification: BehaviorClassification = Field(
@@ -214,19 +243,28 @@ class BehaviorSignal(SQLModel, table=True):
     status: BehaviorSignalStatus = Field(
         sa_column=Column(enum_value_type(BehaviorSignalStatus, length=32), nullable=False, index=True)
     )
-    first_observed_at: datetime = Field(index=True)
-    last_observed_at: datetime = Field(index=True)
-    debounce_until: datetime | None = Field(default=None, index=True)
-    cooldown_until: datetime | None = Field(default=None, index=True)
-    notified_at: datetime | None = None
-    created_at: datetime = Field(default_factory=datetime.now)
-    updated_at: datetime = Field(default_factory=datetime.now, index=True)
+    first_observed_at: datetime = Field(sa_column=utc_datetime_column(index=True))
+    last_observed_at: datetime = Field(sa_column=utc_datetime_column(index=True))
+    debounce_until: datetime | None = Field(
+        default=None,
+        sa_column=utc_datetime_column(nullable=True, index=True),
+    )
+    cooldown_until: datetime | None = Field(
+        default=None,
+        sa_column=utc_datetime_column(nullable=True, index=True),
+    )
+    notified_at: datetime | None = Field(default=None, sa_column=utc_datetime_column(nullable=True))
+    created_at: datetime = Field(default_factory=utc_now, sa_column=utc_datetime_column())
+    updated_at: datetime = Field(
+        default_factory=utc_now,
+        sa_column=utc_datetime_column(index=True),
+    )
 
 
 class BehaviorSignalEvent(SQLModel, table=True):
     __tablename__ = "behavior_signal_events"
 
-    signal_id: int = Field(foreign_key="behavior_signals.id", primary_key=True, ondelete="CASCADE")
-    event_id: int = Field(foreign_key="behavior_events.id", primary_key=True, index=True, ondelete="CASCADE")
-    decision_id: int = Field(foreign_key="behavior_decisions.id", index=True, ondelete="CASCADE")
-    linked_at: datetime = Field(default_factory=datetime.now)
+    signal_id: int = Field(foreign_key="behavior_signals.id", primary_key=True, ondelete="RESTRICT")
+    event_id: int = Field(foreign_key="behavior_events.id", primary_key=True, index=True, ondelete="RESTRICT")
+    decision_id: int = Field(foreign_key="behavior_decisions.id", index=True, ondelete="RESTRICT")
+    linked_at: datetime = Field(default_factory=utc_now, sa_column=utc_datetime_column())

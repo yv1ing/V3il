@@ -4,8 +4,6 @@ from handler.common.http import raise_api_error
 from middleware.system_user import AuthUser
 from schema.common.responses import CommonResponse
 from schema.threat.incidents import (
-    CreateThreatIncidentSessionResponse,
-    ListThreatIncidentSessionsResponse,
     QueryThreatIncidentsResponse,
     ThreatIncidentStatus,
     TransitionThreatIncidentRequest,
@@ -13,10 +11,9 @@ from schema.threat.incidents import (
 )
 from service.common.pagination import paginated_payload
 from service.threat.incidents import (
-    create_threat_incident_session,
-    delete_threat_incident_session,
+    ensure_threat_incident_session,
+    get_threat_incident_session,
     get_threat_incident_for_user,
-    list_threat_incident_sessions,
     query_threat_incidents_for_user,
 )
 from service.threat.state import transition_threat_incident, update_threat_incident
@@ -67,25 +64,21 @@ async def transition_threat_incident_handler(id: int, status: ThreatIncidentStat
     return CommonResponse(message=f"threat incident transitioned to {status.value}", data=result.incident)
 
 
-async def create_threat_incident_session_handler(id: int, user: AuthUser):
-    result = await create_threat_incident_session(id, user_id=user.id, user_role=user.role)
+async def ensure_threat_incident_session_handler(id: int, user: AuthUser):
+    result = await ensure_threat_incident_session(id, user_id=user.id, user_role=user.role)
     if not result.session_id:
         _raise_result(result)
-    return CommonResponse(data=CreateThreatIncidentSessionResponse(session_id=result.session_id))
+    summary = await get_threat_incident_session(id, user_id=user.id, user_role=user.role)
+    if summary is None:
+        raise RuntimeError("created canonical incident session is unavailable")
+    return CommonResponse(data=summary)
 
 
-async def list_threat_incident_sessions_handler(id: int, page: int, size: int, user: AuthUser):
-    result = await list_threat_incident_sessions(id, page=page, size=size, user_id=user.id, user_role=user.role)
+async def get_threat_incident_session_handler(id: int, user: AuthUser):
+    result = await get_threat_incident_session(id, user_id=user.id, user_role=user.role)
     if result is None:
-        raise_api_error(HTTPStatus.NOT_FOUND, "threat incident not found")
-    return CommonResponse(data=ListThreatIncidentSessionsResponse(**paginated_payload(result, result.items)))
-
-
-async def delete_threat_incident_session_handler(id: int, session_id: str, user: AuthUser):
-    result = await delete_threat_incident_session(id, session_id, user_id=user.id, user_role=user.role)
-    if result is None or not result:
-        raise_api_error(HTTPStatus.NOT_FOUND, "threat incident session not found")
-    return CommonResponse(message="threat incident session deleted")
+        raise_api_error(HTTPStatus.NOT_FOUND, "canonical threat incident session not found")
+    return CommonResponse(data=result)
 
 
 async def get_threat_incident_workspace_handler(id: int, user: AuthUser):
@@ -95,8 +88,14 @@ async def get_threat_incident_workspace_handler(id: int, user: AuthUser):
     return CommonResponse(data=result)
 
 
-async def get_threat_incident_timeline_handler(id: int, *, before, limit: int, user: AuthUser):
-    result = await get_incident_timeline(id, before=before, limit=limit, user_id=user.id, user_role=user.role)
+async def get_threat_incident_timeline_handler(id: int, *, query, user: AuthUser):
+    result = await get_incident_timeline(
+        id,
+        cursor=query.to_cursor(),
+        limit=query.limit,
+        user_id=user.id,
+        user_role=user.role,
+    )
     if result is None:
         raise_api_error(HTTPStatus.NOT_FOUND, "threat incident not found")
     return CommonResponse(data=result)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Annotated, Literal
 from urllib.parse import urlparse
 
 import regex
@@ -51,13 +51,21 @@ class DetectionRuleChangeAction(StrEnum):
     ROLLBACK = "rollback"
 
 
+class DetectionRuleChangeDecision(StrEnum):
+    APPROVE = "approve"
+    REJECT = "reject"
+    REQUEST_CHANGES = "request_changes"
+
+
 class DetectionRuleChangeStatus(StrEnum):
     PENDING_APPROVAL = "pending_approval"
     CHANGES_REQUESTED = "changes_requested"
     REJECTED = "rejected"
     DEPLOYING = "deploying"
+    ROLLING_BACK = "rolling_back"
     ACTIVE = "active"
     FAILED = "failed"
+    RECOVERY_REQUIRED = "recovery_required"
     SUPERSEDED = "superseded"
 
 
@@ -66,9 +74,89 @@ class DetectionRuleDeploymentStatus(StrEnum):
     DEPLOYING = "deploying"
     HEALTH_CHECK = "health_check"
     ACTIVE = "active"
+    ROLLING_BACK = "rolling_back"
     FAILED = "failed"
     ROLLED_BACK = "rolled_back"
     ROLLBACK_FAILED = "rollback_failed"
+
+
+DETECTION_RULE_VERSION_STATUS_TRANSITIONS: dict[
+    DetectionRuleVersionStatus,
+    tuple[DetectionRuleVersionStatus, ...],
+] = {
+    DetectionRuleVersionStatus.DRAFT: (
+        DetectionRuleVersionStatus.VALIDATED,
+        DetectionRuleVersionStatus.VALIDATION_FAILED,
+    ),
+    DetectionRuleVersionStatus.VALIDATION_FAILED: (
+        DetectionRuleVersionStatus.VALIDATED,
+        DetectionRuleVersionStatus.VALIDATION_FAILED,
+    ),
+    DetectionRuleVersionStatus.VALIDATED: (
+        DetectionRuleVersionStatus.VALIDATED,
+        DetectionRuleVersionStatus.VALIDATION_FAILED,
+        DetectionRuleVersionStatus.RETIRED,
+    ),
+    DetectionRuleVersionStatus.RETIRED: (),
+}
+
+
+DETECTION_RULE_CHANGE_STATUS_TRANSITIONS: dict[
+    DetectionRuleChangeStatus,
+    tuple[DetectionRuleChangeStatus, ...],
+] = {
+    DetectionRuleChangeStatus.PENDING_APPROVAL: (
+        DetectionRuleChangeStatus.CHANGES_REQUESTED,
+        DetectionRuleChangeStatus.REJECTED,
+        DetectionRuleChangeStatus.DEPLOYING,
+    ),
+    DetectionRuleChangeStatus.CHANGES_REQUESTED: (),
+    DetectionRuleChangeStatus.REJECTED: (),
+    DetectionRuleChangeStatus.DEPLOYING: (
+        DetectionRuleChangeStatus.ACTIVE,
+        DetectionRuleChangeStatus.ROLLING_BACK,
+    ),
+    DetectionRuleChangeStatus.ROLLING_BACK: (
+        DetectionRuleChangeStatus.FAILED,
+        DetectionRuleChangeStatus.RECOVERY_REQUIRED,
+    ),
+    DetectionRuleChangeStatus.ACTIVE: (DetectionRuleChangeStatus.SUPERSEDED,),
+    DetectionRuleChangeStatus.FAILED: (),
+    DetectionRuleChangeStatus.RECOVERY_REQUIRED: (),
+    DetectionRuleChangeStatus.SUPERSEDED: (),
+}
+
+
+DETECTION_RULE_DEPLOYMENT_STATUS_TRANSITIONS: dict[
+    DetectionRuleDeploymentStatus,
+    tuple[DetectionRuleDeploymentStatus, ...],
+] = {
+    DetectionRuleDeploymentStatus.PENDING: (
+        DetectionRuleDeploymentStatus.DEPLOYING,
+        DetectionRuleDeploymentStatus.FAILED,
+    ),
+    DetectionRuleDeploymentStatus.DEPLOYING: (
+        DetectionRuleDeploymentStatus.HEALTH_CHECK,
+        DetectionRuleDeploymentStatus.ROLLING_BACK,
+    ),
+    DetectionRuleDeploymentStatus.HEALTH_CHECK: (
+        DetectionRuleDeploymentStatus.ACTIVE,
+        DetectionRuleDeploymentStatus.ROLLING_BACK,
+    ),
+    DetectionRuleDeploymentStatus.ACTIVE: (DetectionRuleDeploymentStatus.ROLLING_BACK,),
+    DetectionRuleDeploymentStatus.ROLLING_BACK: (
+        DetectionRuleDeploymentStatus.ROLLED_BACK,
+        DetectionRuleDeploymentStatus.ROLLBACK_FAILED,
+    ),
+    DetectionRuleDeploymentStatus.ROLLBACK_FAILED: (DetectionRuleDeploymentStatus.ROLLING_BACK,),
+    DetectionRuleDeploymentStatus.FAILED: (),
+    DetectionRuleDeploymentStatus.ROLLED_BACK: (),
+}
+
+
+class DetectionSensorHealthStatus(StrEnum):
+    HEALTHY = "healthy"
+    DEGRADED = "degraded"
 
 
 class BehaviorClassification(StrEnum):
@@ -89,12 +177,26 @@ class BehaviorSignalStatus(StrEnum):
     CLOSED = "closed"
 
 
+class CentralRuleOperator(StrEnum):
+    EQUALS = "eq"
+    NOT_EQUALS = "neq"
+    CONTAINS = "contains"
+    PREFIX = "prefix"
+    SUFFIX = "suffix"
+    IN = "in"
+    REGEX = "regex"
+    EXISTS = "exists"
+
+
+JsonScalar = str | int | float | bool
+
+
 class CentralRuleCondition(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     field: str = Field(min_length=1, max_length=255, pattern=r"^[A-Za-z_][A-Za-z0-9_.]*$")
-    operator: str = Field(pattern="^(eq|neq|contains|prefix|suffix|in|regex|exists)$")
-    value: Any = None
+    operator: CentralRuleOperator
+    value: JsonScalar | list[JsonScalar] | None = None
 
     @model_validator(mode="after")
     def validate_operator_value(self) -> "CentralRuleCondition":
@@ -161,6 +263,70 @@ class SuppressionRuleDefinition(BaseModel):
     reason: str = Field(min_length=1, max_length=1000)
 
 
+class DetectionSensorHealthSnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sensor_id: str
+    status: DetectionSensorHealthStatus
+    active_bundle_hash: str
+    desired_bundle_hash: str
+    sequence: int = Field(ge=0)
+    error: str
+    observed_at: datetime
+
+
+class DetectionRuleValidationResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    valid: bool
+    errors: list[str]
+    normalized: CentralRuleDefinition | SuppressionRuleDefinition | None
+    validator: Literal["v3il-static-detection-v1"] = "v3il-static-detection-v1"
+    sensor_validation_required: bool
+
+
+class DetectionReplayClassificationCount(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    classification: BehaviorClassification
+    count: int = Field(ge=0)
+
+
+class CentralDetectionRuleReplayResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["central"] = "central"
+    evaluated: int = Field(ge=0)
+    matched: int = Field(ge=0)
+    classifications: list[DetectionReplayClassificationCount]
+
+
+class SensorDetectionRuleReplayResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["sensor_validation_required"] = "sensor_validation_required"
+    evaluated: Literal[0] = 0
+    matched: Literal[0] = 0
+    note: str
+
+
+DetectionRuleReplayResult = Annotated[
+    CentralDetectionRuleReplayResult | SensorDetectionRuleReplayResult,
+    Field(discriminator="kind"),
+]
+
+
+class MatchedDetectionRuleVersion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    rule_id: int
+    version_id: int
+    content_sha256: str
+    score: int = Field(ge=0, le=100)
+    classification: BehaviorClassification
+    suppressed: bool
+
+
 class ManagedHostSensorSchema(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -208,8 +374,8 @@ class DetectionRuleVersionSchema(BaseModel):
     status: DetectionRuleVersionStatus
     content: str
     content_sha256: str
-    validation_result: dict[str, Any]
-    replay_result: dict[str, Any]
+    validation_result: DetectionRuleValidationResult
+    replay_result: DetectionRuleReplayResult | None
     created_by_actor_type: str
     created_by_actor_code: str
     created_from_session_id: str
@@ -235,6 +401,7 @@ class DetectionRuleChangeRequestSchema(BaseModel):
     requested_from_session_id: str
     decided_by_user_id: int | None
     decision_reason: str
+    error: str
     created_at: datetime
     decided_at: datetime | None
     resolved_at: datetime | None
@@ -249,6 +416,12 @@ class DetectionRuleDeploymentSchema(BaseModel):
     status: DetectionRuleDeploymentStatus
     previous_bundle_hash: str
     target_bundle_hash: str
+    observed_bundle_hash: str
+    health_snapshot: DetectionSensorHealthSnapshot | None
+    rollback_observed_bundle_hash: str
+    rollback_health_snapshot: DetectionSensorHealthSnapshot | None
+    runtime_owner_id: str
+    lease_fencing_token: int
     attempt: int
     error: str
     started_at: datetime | None
@@ -267,7 +440,7 @@ class BehaviorDecisionSchema(BaseModel):
     score: int
     signal_kind: str
     reason: str
-    matched_rule_versions: list[dict[str, Any]]
+    matched_rule_versions: list[MatchedDetectionRuleVersion]
     suppression_rule_versions: list[int]
     material: bool
     created_at: datetime
@@ -364,7 +537,7 @@ class SubmitDetectionRuleChangeRequest(BaseModel):
 class DecideDetectionRuleChangeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    decision: str = Field(pattern="^(approve|reject|request_changes)$")
+    decision: DetectionRuleChangeDecision
     reason: str = Field(min_length=1, max_length=4000)
 
 

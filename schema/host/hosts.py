@@ -5,12 +5,14 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from schema.common.responses import PaginatedResponse
+from schema.common.resources import ResourceLifecycleStatus
 
 
 class ManagedHostSchema(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    status: ResourceLifecycleStatus
     ip_address: str
     ssh_port: int
     host_account: str
@@ -22,6 +24,7 @@ class ManagedHostSchema(BaseModel):
     docker_client_key: str
     created_at: datetime
     updated_at: datetime
+    retired_at: datetime | None
 
 
 class CreateManagedHostRequest(BaseModel):
@@ -123,7 +126,7 @@ class UpdateManagedHostRequest(BaseModel):
         return self
 
 
-class DeleteManagedHostResponse(BaseModel):
+class RetireManagedHostResponse(BaseModel):
     id: int
 
 
@@ -168,7 +171,7 @@ class PullManagedHostImagesResponse(BaseModel):
     items: list[PullManagedHostImageResultSchema]
 
 
-class DeleteManagedHostImageRequest(BaseModel):
+class RemoveManagedHostImageRequest(BaseModel):
     image_id: str = Field(min_length=1, max_length=255)
     force: bool = False
 

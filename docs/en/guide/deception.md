@@ -52,6 +52,12 @@ Once active, the attacker-facing services receive interaction. The environment w
 
 When the investigation raises a new hypothesis, Ph4ntom can propose another environment version. Each change records its purpose, expected effect, risk, and verification outcome. If verification fails, V3il records the failure and returns the environment to an operable state.
 
+Each revision captures the applied baseline and advances through explicit execution checkpoints. Service changes, container actions, detection updates, and verification results remain associated with that revision. A successful revision becomes the next baseline. A failed revision restores the previous baseline and records the resulting environment state for operator review.
+
+Long-running sandbox commands execute as durable batches. The Agent work that requested the batch pauses against that specific operation and continues once with its combined result. Cancellation is propagated to queued and running commands. This keeps command output, environment state, and the requesting Agent context aligned across worker restarts.
+
+Detection changes follow the same revision boundary. Rules are validated before deployment, associated with the target sensors, and tracked through deployment and health status. Recovery restores the last applied detection state together with the environment baseline, giving the next investigation step a consistent observation surface.
+
 ### Pause And Retirement
 
 Operators can pause, resume, or retire an environment as the investigation changes. Before retirement, confirm the evidence, report, and retention requirements for the operation.
@@ -97,3 +103,5 @@ Use these controls for preparation, incident handling, and operational audit. An
 ## Failure Handling
 
 When setup or an update fails, V3il automatically restores the environment to its previous usable state. The workspace keeps the failure and recovery outcome visible so the operator can correct the design and submit a new version. If automatic recovery cannot complete, the environment is clearly marked as requiring attention and further changes are paused until recovery succeeds. Resources supplied by the operator remain under operator control, while resources allocated for an unsuccessful setup are cleaned up by the platform.
+
+Recovery is resumable from the last recorded checkpoint. The workspace presents the failed step, completed rollback work, remaining recovery work, and the baseline that will be restored. A recovery request continues that recorded process and preserves the original revision history. Once recovery completes, the environment returns to `draft` after an initial setup failure or `active` after an adaptation failure.

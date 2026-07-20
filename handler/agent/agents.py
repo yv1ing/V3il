@@ -1,21 +1,21 @@
+from fastapi import Request
+
 from config import get_config
 from core.agent.constants import DEFAULT_AGENT_CODE
-from core.runtime.session import get_agent_registry
-from schema.agent.sessions import AgentInfoSchema, ListAgentsResponse
-from schema.common.responses import CommonResponse
+from schema.agent.sessions import AgentCode, AgentInfoSchema, ListAgentsResponse
+from service.agent.supervisor import AgentRuntimeSupervisor
 
 
-async def list_agents_handler() -> CommonResponse:
+async def list_agents_handler(request: Request) -> ListAgentsResponse:
+    runtime = getattr(request.app.state, "agent_runtime", None)
+    if not isinstance(runtime, AgentRuntimeSupervisor):
+        raise RuntimeError("agent runtime is unavailable")
     cfg = get_config()
-    items = [
-        AgentInfoSchema(
-            code=code,
+    return ListAgentsResponse(
+        items=[AgentInfoSchema(
+            code=AgentCode(code),
             name=cfg.agents[code].name,
             description=cfg.agents[code].description,
-        )
-        for code in get_agent_registry().codes()
-    ]
-    return CommonResponse(data=ListAgentsResponse(
-        items=items,
-        default_code=DEFAULT_AGENT_CODE,
-    ))
+        ) for code in runtime.registry.codes()],
+        default_code=AgentCode(DEFAULT_AGENT_CODE),
+    )

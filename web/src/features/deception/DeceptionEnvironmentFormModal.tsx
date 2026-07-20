@@ -4,11 +4,12 @@ import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   DECEPTION_ADAPTATION_MODE,
   DECEPTION_ADAPTATION_MODE_VALUES,
-  MAX_DECEPTION_REFERENCE_FILE_BYTES,
-  MAX_DECEPTION_REFERENCE_FILES,
-  MAX_DECEPTION_REFERENCE_TOTAL_BYTES,
-  MAX_DECEPTION_REFERENCE_URL_LENGTH,
-  MAX_DECEPTION_REFERENCE_URLS,
+  DECEPTION_REFERENCES_MAXIMUM_FILE_BYTES,
+  DECEPTION_REFERENCES_MAXIMUM_FILES,
+  DECEPTION_REFERENCES_MAXIMUM_TOTAL_BYTES,
+  DECEPTION_REFERENCES_MAXIMUM_URL_LENGTH,
+  DECEPTION_REFERENCES_MAXIMUM_URLS,
+  FIELD_CONSTRAINTS,
   SANDBOX_CONTAINER_EGRESS_MODE,
 } from "../../shared/api/generated/constants";
 import type {
@@ -122,8 +123,8 @@ export function DeceptionEnvironmentFormModal({
     const names = new Set(next.map((file) => file.name.toLocaleLowerCase()));
     let totalBytes = next.reduce((sum, file) => sum + file.size, 0);
     for (const file of selected) {
-      if (next.length >= MAX_DECEPTION_REFERENCE_FILES) {
-        Toast.warning(`At most ${MAX_DECEPTION_REFERENCE_FILES} reference files are allowed`);
+      if (next.length >= DECEPTION_REFERENCES_MAXIMUM_FILES) {
+        Toast.warning(`At most ${DECEPTION_REFERENCES_MAXIMUM_FILES} reference files are allowed`);
         break;
       }
       if (names.has(file.name.toLocaleLowerCase())) {
@@ -134,12 +135,12 @@ export function DeceptionEnvironmentFormModal({
         Toast.warning(`${file.name} is empty`);
         continue;
       }
-      if (file.size > MAX_DECEPTION_REFERENCE_FILE_BYTES) {
-        Toast.warning(`${file.name} exceeds ${formatBytes(MAX_DECEPTION_REFERENCE_FILE_BYTES)}`);
+      if (file.size > DECEPTION_REFERENCES_MAXIMUM_FILE_BYTES) {
+        Toast.warning(`${file.name} exceeds ${formatBytes(DECEPTION_REFERENCES_MAXIMUM_FILE_BYTES)}`);
         continue;
       }
-      if (totalBytes + file.size > MAX_DECEPTION_REFERENCE_TOTAL_BYTES) {
-        Toast.warning(`Reference files exceed ${formatBytes(MAX_DECEPTION_REFERENCE_TOTAL_BYTES)} in total`);
+      if (totalBytes + file.size > DECEPTION_REFERENCES_MAXIMUM_TOTAL_BYTES) {
+        Toast.warning(`Reference files exceed ${formatBytes(DECEPTION_REFERENCES_MAXIMUM_TOTAL_BYTES)} in total`);
         break;
       }
       names.add(file.name.toLocaleLowerCase());
@@ -170,7 +171,7 @@ export function DeceptionEnvironmentFormModal({
       <div className="form-section-title">Environment context</div>
       <div className="form-grid-two">
         <FormField label="Name">
-          <Input value={values.name} maxLength={255} onChange={(name) => setValues((current) => ({ ...current, name }))} />
+          <Input value={values.name} maxLength={FIELD_CONSTRAINTS.Body_create_route_api_deception_environments_post.name.maxLength} onChange={(name) => setValues((current) => ({ ...current, name }))} />
         </FormField>
         <FormField label="Adaptation mode">
           <Select
@@ -184,7 +185,7 @@ export function DeceptionEnvironmentFormModal({
         <TextArea
           value={values.description}
           rows={3}
-          maxLength={4000}
+          maxLength={FIELD_CONSTRAINTS.Body_create_route_api_deception_environments_post.description.maxLength}
           placeholder="Record the environment's purpose and operator-facing notes. Describe the actual build later in the Console."
           onChange={(description) => setValues((current) => ({ ...current, description }))}
         />
@@ -273,7 +274,7 @@ export function DeceptionEnvironmentFormModal({
               <Link2 size={15} />
               <Input
                 value={url}
-                maxLength={MAX_DECEPTION_REFERENCE_URL_LENGTH}
+                maxLength={DECEPTION_REFERENCES_MAXIMUM_URL_LENGTH}
                 validateStatus={url && !isHttpReferenceUrl(url) ? "error" : "default"}
                 placeholder="https://reference.example"
                 onChange={(nextUrl) => setValues((current) => ({
@@ -293,7 +294,7 @@ export function DeceptionEnvironmentFormModal({
               />
             </div>
           ))}
-          {referenceUrls.length < MAX_DECEPTION_REFERENCE_URLS ? (
+          {referenceUrls.length < DECEPTION_REFERENCES_MAXIMUM_URLS ? (
             <Button
               icon={<Plus size={15} />}
               onClick={() => setValues((current) => ({
@@ -311,8 +312,8 @@ export function DeceptionEnvironmentFormModal({
             Select code, archives, or other files
           </Button>
           <small>
-            Up to {MAX_DECEPTION_REFERENCE_FILES} files, {formatBytes(MAX_DECEPTION_REFERENCE_FILE_BYTES)} each,
-            {" "}{formatBytes(MAX_DECEPTION_REFERENCE_TOTAL_BYTES)} total. Files are staged on disk and copied into the dedicated container.
+            Up to {DECEPTION_REFERENCES_MAXIMUM_FILES} files, {formatBytes(DECEPTION_REFERENCES_MAXIMUM_FILE_BYTES)} each,
+            {" "}{formatBytes(DECEPTION_REFERENCES_MAXIMUM_TOTAL_BYTES)} total. Files are staged on disk and copied into the dedicated container.
           </small>
           {files.length ? (
             <div className="compact-records">

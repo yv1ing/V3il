@@ -1,9 +1,10 @@
 import { Button, Popconfirm, Tooltip } from "@douyinfe/semi-ui";
 import {
   Activity,
+  Bot,
   Box,
+  CircleMinus,
   FolderOpen,
-  PanelRightOpen,
   Pause,
   Play,
   Plus,
@@ -11,19 +12,19 @@ import {
   ShieldAlert,
   SquareStop,
   SquareTerminal,
-  Trash2,
 } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import "../../app/styles/playground.css";
 import { useAdminHeaderActions } from "../../app/layouts/AdminLayout";
+import { AGENT_CONSOLE_PATH, agentSessionPath } from "../../app/routePaths";
 import { showApiError, showApiSuccess } from "../../shared/api/feedback";
 import { SANDBOX_CONTAINER_STATUS } from "../../shared/api/generated/constants";
 import {
   canManageSandboxContainer,
-  deleteSandboxContainer,
   pauseSandboxContainer,
   queryAvailableSandboxContainers,
+  removeSandboxContainer,
   resumeSandboxContainer,
   startSandboxContainer,
   stopSandboxContainer,
@@ -39,11 +40,6 @@ import { ChatStream } from "./ChatStream";
 import { Composer } from "./Composer";
 import { MessageScrollPanel } from "./MessageScrollPanel";
 import { SandboxSelector } from "./SandboxSelector";
-import { SubagentSidePanel } from "./SubagentSidePanel";
-import { useSubagentPanel } from "./useSubagentPanel";
-import { isSubagentRunning } from "./subagentView";
-
-type PlaygroundLocationState = { sessionId?: string };
 
 type SandboxActionButtonProps = {
   ariaLabel: string;
@@ -64,24 +60,33 @@ const STATUS_LABEL: Record<AgentSessionConnectionStatus, string> = {
 export function PlaygroundPage() {
   const setHeaderActions = useAdminHeaderActions();
   const {
-    activeSessionId, activeSessionSummary, selectSession,
+    activeSessionId, activeSessionSummary, invalidSessionId, selectSession,
     refreshSessions,
     chatState, status, historyLoading, historyHasMore, historyPrepending, historyVersion,
-    agents, defaultAgentCode, activeAgentCode, setActiveAgentCode,
+    agents, activeAgentCode, setActiveAgentCode,
     send, updateSelectedSandboxContainer, interrupt, cancelAll, loadPreviousHistory,
   } = useAgentSessionContext();
-  const location = useLocation();
   const navigate = useNavigate();
-  const [sandboxContainerId, setSandboxContainerId] = useState<number | null>(null);
+  const { sessionId: routeSessionId } = useParams<{ sessionId?: string }>();
+  const [managedSandboxContainerId, setManagedSandboxContainerId] = useState<number | null>(null);
+  const [agentSandboxContainerId, setAgentSandboxContainerId] = useState<number | null>(null);
   const [createSandboxOpen, setCreateSandboxOpen] = useState(false);
   const [sandboxAction, setSandboxAction] = useState<string | null>(null);
   const activeSessionIdRef = useRef(activeSessionId);
   const sandboxOperationRef = useRef({ busy: false, generation: 0 });
   activeSessionIdRef.current = activeSessionId;
   const { openFileManager, openShell, syncContainerWindows } = useContainerShell();
-  const { selectedSubagent, setSelectedSubagent, subagentTabs, closeSubagentPanel } = useSubagentPanel(chatState, activeSessionId);
-  const hasRunningSubagents = subagentTabs.some((tab) => isSubagentRunning(tab.status));
-  const agentSwitchDisabled = activeAgentCode === defaultAgentCode && hasRunningSubagents;
+  const capabilities = activeSessionSummary?.capabilities;
+  const sessionSummaryPending = Boolean(activeSessionId && !activeSessionSummary);
+  const canSelectSandbox = !activeSessionId || Boolean(capabilities?.can_select_sandbox_container);
+  const composerDisabled = historyLoading
+    || sessionSummaryPending
+    || Boolean(activeSessionId && !capabilities?.can_submit_turn);
+  const composerDisabledReason = historyLoading
+    ? "Loading conversation history..."
+    : sessionSummaryPending
+      ? "Loading session state..."
+      : capabilities?.turn_block_reason || "This session cannot accept a new turn";
   const sandboxOperationBusy = sandboxAction !== null;
 
   const activeIncidentId = activeSessionSummary?.incident_id ?? null;
@@ -95,9 +100,12 @@ export function PlaygroundPage() {
   const availableSandboxContainers = sandboxOptions.items;
   const knownSandboxContainers = sandboxOptions.knownItems;
   const selectableSandboxContainers = availableSandboxContainers;
+  const agentSandboxContainers = availableSandboxContainers.filter(
+    (container) => container.status === SANDBOX_CONTAINER_STATUS.RUNNING,
+  );
   const selectedSandboxContainer = useMemo(
-    () => findSandboxContainerById(knownSandboxContainers, sandboxContainerId),
-    [knownSandboxContainers, sandboxContainerId],
+    () => findSandboxContainerById(knownSandboxContainers, managedSandboxContainerId),
+    [knownSandboxContainers, managedSandboxContainerId],
   );
   const sandboxAccessUnavailableReason = getSandboxAccessUnavailableReason(selectedSandboxContainer);
   const sandboxManageUnavailableReason = sandboxAccessUnavailableReason ? "No permission to operate this sandbox" : null;
@@ -115,11 +123,11 @@ export function PlaygroundPage() {
     && selectedSandboxContainer?.status === SANDBOX_CONTAINER_STATUS.RUNNING;
   const canResumeSelectedSandbox = !sandboxManageUnavailableReason
     && selectedSandboxContainer?.status === SANDBOX_CONTAINER_STATUS.PAUSED;
-  const openSubagentPanel = useCallback(() => {
-    const tab = [...subagentTabs].reverse().find((item) => isSubagentRunning(item.status)) ?? subagentTabs[subagentTabs.length - 1];
-    if (tab) setSelectedSubagent(tab.agentCode);
-  }, [setSelectedSubagent, subagentTabs]);
-
+  const canRemoveSelectedSandbox = Boolean(
+    !sandboxOperationBusy
+    && selectedSandboxContainer
+    && !sandboxManageUnavailableReason,
+  );
   const openSelectedFileManager = useCallback(() => {
     if (selectedSandboxContainer) openFileManager(selectedSandboxContainer);
   }, [openFileManager, selectedSandboxContainer]);
@@ -128,17 +136,24 @@ export function PlaygroundPage() {
     if (selectedSandboxContainer) openShell(selectedSandboxContainer);
   }, [openShell, selectedSandboxContainer]);
 
-  // Consume session navigation state once so browser history does not replay it.
   useEffect(() => {
-    const incoming = (location.state as PlaygroundLocationState | null)?.sessionId;
-    if (incoming) {
-      selectSession(incoming);
-      navigate(location.pathname, { replace: true });
+    if (routeSessionId) {
+      selectSession(routeSessionId, { navigateBlank: false });
+      return;
     }
-  }, [location.pathname, location.state, navigate, selectSession]);
+    selectSession(null);
+  }, [routeSessionId, selectSession]);
 
   useEffect(() => {
-    setSandboxContainerId(activeSessionSummary?.selected_sandbox_container_id ?? null);
+    if (routeSessionId && invalidSessionId === routeSessionId) {
+      navigate(AGENT_CONSOLE_PATH, { replace: true });
+    }
+  }, [invalidSessionId, navigate, routeSessionId]);
+
+  useEffect(() => {
+    const selectedId = activeSessionSummary?.selected_sandbox_container_id ?? null;
+    setAgentSandboxContainerId(selectedId);
+    if (selectedId !== null) setManagedSandboxContainerId(selectedId);
   }, [activeSessionSummary?.selected_sandbox_container_id]);
 
   useEffect(() => {
@@ -157,11 +172,15 @@ export function PlaygroundPage() {
     syncContainerWindows,
   ]);
 
-  const changeSandboxContainer = useCallback(async (nextContainerId: number | null) => {
-    const nextContainer = findSandboxContainerById(selectableSandboxContainers, nextContainerId);
+  const changeManagedSandboxContainer = useCallback((nextContainerId: number | null) => {
+    setManagedSandboxContainerId(nextContainerId);
+    syncContainerWindows(findSandboxContainerById(selectableSandboxContainers, nextContainerId));
+  }, [selectableSandboxContainers, syncContainerWindows]);
+
+  const changeAgentSandboxContainer = useCallback(async (nextContainerId: number | null) => {
+    if (nextContainerId !== null && !findSandboxContainerById(agentSandboxContainers, nextContainerId)) return;
     if (!activeSessionId) {
-      setSandboxContainerId(nextContainerId);
-      syncContainerWindows(nextContainer);
+      setAgentSandboxContainerId(nextContainerId);
       return;
     }
     const operation = beginSandboxOperation(sandboxOperationRef, activeSessionId, "select", setSandboxAction);
@@ -170,21 +189,23 @@ export function PlaygroundPage() {
       const summary = await updateSelectedSandboxContainer(activeSessionId, nextContainerId);
       if (!isCurrentSandboxOperation(sandboxOperationRef, activeSessionIdRef, operation)) return;
       const selectedId = summary?.selected_sandbox_container_id ?? null;
-      setSandboxContainerId(selectedId);
-      syncContainerWindows(findSandboxContainerById(selectableSandboxContainers, selectedId));
+      setAgentSandboxContainerId(selectedId);
     } catch (error) {
       if (isCurrentSandboxOperation(sandboxOperationRef, activeSessionIdRef, operation)) showApiError(error);
     } finally {
       finishSandboxOperation(sandboxOperationRef, operation, setSandboxAction);
     }
-  }, [activeSessionId, selectableSandboxContainers, syncContainerWindows, updateSelectedSandboxContainer]);
+  }, [activeSessionId, agentSandboxContainers, updateSelectedSandboxContainer]);
 
-  const handleSandboxCreated = useCallback((container: SandboxContainer) => {
+  const handleSandboxCreated = useCallback(async (container: SandboxContainer) => {
     setCreateSandboxOpen(false);
     sandboxOptions.updateItems((current) => upsertSandboxContainer(current, container));
-    setSandboxContainerId(container.id);
+    setManagedSandboxContainerId(container.id);
     syncContainerWindows(container);
-  }, [sandboxOptions.updateItems, syncContainerWindows]);
+  }, [
+    sandboxOptions.updateItems,
+    syncContainerWindows,
+  ]);
 
   const runSandboxMutation = useCallback(async (
     action: "start" | "stop" | "pause" | "resume",
@@ -207,27 +228,34 @@ export function PlaygroundPage() {
       const updatedContainer = response.data;
       if (updatedContainer) {
         sandboxOptions.updateItems((current) => upsertSandboxContainer(current, updatedContainer));
-        setSandboxContainerId(updatedContainer.id);
+        setManagedSandboxContainerId(updatedContainer.id);
         syncContainerWindows(updatedContainer);
+        if (
+          updatedContainer.status !== SANDBOX_CONTAINER_STATUS.RUNNING
+        ) {
+          if (updatedContainer.id === agentSandboxContainerId) setAgentSandboxContainerId(null);
+          await refreshSessions();
+        }
       }
     } catch (error) {
       if (isCurrentSandboxOperation(sandboxOperationRef, activeSessionIdRef, operation)) showApiError(error);
     } finally {
       finishSandboxOperation(sandboxOperationRef, operation, setSandboxAction);
     }
-  }, [activeSessionId, sandboxOptions.updateItems, syncContainerWindows]);
+  }, [activeSessionId, agentSandboxContainerId, refreshSessions, sandboxOptions.updateItems, syncContainerWindows]);
 
-  const deleteSelectedSandboxContainer = useCallback(async () => {
+  const removeSelectedSandboxContainer = useCallback(async () => {
     if (!selectedSandboxContainer) return;
-    const actionKey = `delete:${selectedSandboxContainer.id}`;
+    const actionKey = `remove:${selectedSandboxContainer.id}`;
     const operation = beginSandboxOperation(sandboxOperationRef, activeSessionId, actionKey, setSandboxAction);
     if (!operation) return;
     try {
-      const response = await deleteSandboxContainer(selectedSandboxContainer.id);
+      const response = await removeSandboxContainer(selectedSandboxContainer.id);
       if (!isCurrentSandboxOperation(sandboxOperationRef, activeSessionIdRef, operation)) return;
       showApiSuccess(response);
       sandboxOptions.updateItems((current) => current.filter((container) => container.id !== selectedSandboxContainer.id));
-      setSandboxContainerId(null);
+      setManagedSandboxContainerId(null);
+      if (agentSandboxContainerId === selectedSandboxContainer.id) setAgentSandboxContainerId(null);
       syncContainerWindows(null);
       await refreshSessions();
     } catch (error) {
@@ -235,17 +263,32 @@ export function PlaygroundPage() {
     } finally {
       finishSandboxOperation(sandboxOperationRef, operation, setSandboxAction);
     }
-  }, [activeSessionId, refreshSessions, sandboxOptions.updateItems, selectedSandboxContainer, syncContainerWindows]);
+  }, [activeSessionId, agentSandboxContainerId, refreshSessions, sandboxOptions.updateItems, selectedSandboxContainer, syncContainerWindows]);
 
   const headerNode = useMemo(() => (
     <>
       <SandboxSelector
         containers={selectableSandboxContainers}
         source={sandboxOptions}
-        value={sandboxContainerId}
+        value={managedSandboxContainerId}
         className="sandbox-selector-topbar"
         disabled={sandboxOperationBusy}
-        onChange={(id) => void changeSandboxContainer(id)}
+        placeholder="Manage sandbox"
+        emptyContent="No manageable sandbox"
+        ariaLabel="Manage sandbox container"
+        onChange={changeManagedSandboxContainer}
+      />
+      <SandboxSelector
+        containers={agentSandboxContainers}
+        source={sandboxOptions}
+        value={agentSandboxContainerId}
+        className="sandbox-selector-topbar"
+        disabled={sandboxOperationBusy || !canSelectSandbox}
+        prefix={<Bot size={15} />}
+        placeholder="Agent sandbox"
+        emptyContent="No running sandbox"
+        ariaLabel="Select Agent sandbox container"
+        onChange={(id) => void changeAgentSandboxContainer(id)}
       />
       <div className="sandbox-container-actions" aria-label="Selected sandbox actions">
         <SandboxActionButton
@@ -287,24 +330,35 @@ export function PlaygroundPage() {
           tooltip={sandboxManageUnavailableReason ?? (canResumeSelectedSandbox ? `Resume ${selectedSandboxName}` : "Select a paused sandbox")}
           onClick={() => void runSandboxMutation("resume", selectedSandboxContainer)}
         />
-        <Popconfirm
-          title="Delete container"
-          content={selectedSandboxContainer ? `Delete ${selectedSandboxContainer.container_name}?` : "Select a sandbox first"}
-          okType="danger"
-          cancelText={UI_TEXT.cancel}
-          onConfirm={() => void deleteSelectedSandboxContainer()}
-        >
-          <span>
-            <SandboxActionButton
-              ariaLabel={`Delete ${selectedSandboxName}`}
-              disabled={sandboxOperationBusy || !selectedSandboxContainer || Boolean(sandboxManageUnavailableReason)}
-              icon={<Trash2 size={15} />}
-              loading={sandboxAction === `delete:${selectedSandboxActionId}`}
-              tooltip={sandboxManageUnavailableReason ?? (selectedSandboxContainer ? `Delete ${selectedSandboxName}` : "Select a sandbox first")}
-              onClick={() => undefined}
-            />
-          </span>
-        </Popconfirm>
+        {canRemoveSelectedSandbox ? (
+          <Popconfirm
+            title="Remove container"
+            content={`Remove ${selectedSandboxContainer?.container_name}?`}
+            okType="danger"
+            cancelText={UI_TEXT.cancel}
+            onConfirm={() => void removeSelectedSandboxContainer()}
+          >
+            <span>
+              <SandboxActionButton
+                ariaLabel={`Remove ${selectedSandboxName}`}
+                disabled={false}
+                icon={<CircleMinus size={15} />}
+                loading={sandboxAction === `remove:${selectedSandboxActionId}`}
+                tooltip={`Remove ${selectedSandboxName}`}
+                onClick={() => undefined}
+              />
+            </span>
+          </Popconfirm>
+        ) : (
+          <SandboxActionButton
+            ariaLabel={`Remove ${selectedSandboxName}`}
+            disabled
+            icon={<CircleMinus size={15} />}
+            loading={sandboxAction === `remove:${selectedSandboxActionId}`}
+            tooltip={sandboxManageUnavailableReason ?? (selectedSandboxContainer ? `Remove ${selectedSandboxName}` : "Select a sandbox first")}
+            onClick={() => undefined}
+          />
+        )}
         <SandboxActionButton
           ariaLabel={`Open terminal for ${selectedSandboxName}`}
           disabled={Boolean(shellUnavailableReason)}
@@ -328,15 +382,16 @@ export function PlaygroundPage() {
             onClick={() => navigate(`/incidents/${activeIncidentId}`)}
           />
         ) : null}
-        <SandboxActionButton
-          ariaLabel="Open subagent panel"
-          disabled={subagentTabs.length === 0}
-          icon={<PanelRightOpen size={15} />}
-          tooltip={subagentTabs.length > 0 ? "Open subagent panel" : "No subagent messages"}
-          onClick={openSubagentPanel}
-        />
       </div>
-      <Button icon={<Plus size={16} />} theme="solid" type="primary" onClick={() => selectSession(null)}>
+      <Button
+        icon={<Plus size={16} />}
+        theme="solid"
+        type="primary"
+        onClick={() => {
+          selectSession(null);
+          navigate(AGENT_CONSOLE_PATH);
+        }}
+      >
         New chat
       </Button>
       <span className={cx("stream-status", `stream-status-${status}`)}>
@@ -347,19 +402,23 @@ export function PlaygroundPage() {
   ), [
     activeIncidentId,
     canPauseSelectedSandbox,
+    canRemoveSelectedSandbox,
     canResumeSelectedSandbox,
     canStartSelectedSandbox,
     canStopSelectedSandbox,
-    changeSandboxContainer,
-    deleteSelectedSandboxContainer,
+    canSelectSandbox,
+    changeAgentSandboxContainer,
+    changeManagedSandboxContainer,
+    removeSelectedSandboxContainer,
     openSelectedFileManager,
     openSelectedShell,
-    openSubagentPanel,
     runSandboxMutation,
     sandboxAction,
     sandboxManageUnavailableReason,
     sandboxOperationBusy,
-    sandboxContainerId,
+    agentSandboxContainerId,
+    agentSandboxContainers,
+    managedSandboxContainerId,
     selectableSandboxContainers,
     sandboxOptions,
     selectSession,
@@ -368,7 +427,7 @@ export function PlaygroundPage() {
     selectedSandboxName,
     shellUnavailableReason,
     status,
-    subagentTabs.length,
+    navigate,
   ]);
 
   useLayoutEffect(() => {
@@ -378,7 +437,8 @@ export function PlaygroundPage() {
 
   const handleSend = async (content: AgentInputPart[]) => {
     try {
-      await send(content, activeSessionId, sandboxContainerId);
+      const session = await send(content, activeSessionId, agentSandboxContainerId);
+      navigate(agentSessionPath(session.id), { replace: activeSessionId == null });
       return true;
     } catch {
       return false;
@@ -386,7 +446,7 @@ export function PlaygroundPage() {
   };
 
   return (
-    <div className={cx("playground-shell", selectedSubagent && "playground-shell-split")}>
+    <div className="playground-shell">
       <div className="playground-main">
         <div className="playground-conversation-frame">
           <div className="playground-main-column">
@@ -407,20 +467,21 @@ export function PlaygroundPage() {
                   nodes={chatState.nodes}
                   streaming={chatState.streaming}
                   agents={agents}
-                  selectedSubagent={selectedSubagent}
                   tailRef={tailRef}
-                  onOpenSubagent={setSelectedSubagent}
                 />
               )}
             </MessageScrollPanel>
             <div className="playground-composer">
               <Composer
                 streaming={chatState.streaming}
-                disabled={historyLoading}
+                disabled={composerDisabled}
+                disabledReason={composerDisabledReason}
                 agents={agents}
                 activeAgentCode={activeAgentCode}
-                agentSwitchDisabled={agentSwitchDisabled}
-                canCancelAll={hasRunningSubagents}
+                agentSwitchDisabled={Boolean(activeSessionId && !capabilities?.can_switch_agent)}
+                agentSwitchDisabledReason={capabilities?.turn_block_reason || "Agent switching is unavailable for this session"}
+                canInterrupt={Boolean(capabilities?.can_interrupt)}
+                canCancelAll={Boolean(capabilities?.can_cancel_all)}
                 onPickAgent={setActiveAgentCode}
                 onSend={handleSend}
                 onInterrupt={() => void interrupt()}
@@ -428,14 +489,6 @@ export function PlaygroundPage() {
               />
             </div>
           </div>
-          <SubagentSidePanel
-            nodes={chatState.nodes}
-            tabs={subagentTabs}
-            agents={agents}
-            selection={selectedSubagent}
-            onSelect={setSelectedSubagent}
-            onClose={closeSubagentPanel}
-          />
         </div>
       </div>
       <SandboxContainerFormModal

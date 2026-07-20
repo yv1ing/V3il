@@ -1,22 +1,25 @@
 from dataclasses import dataclass
-from datetime import datetime
 
 from sqlalchemy import func, or_
 from sqlmodel import select
 
+from utils.time import utc_now
+
 from core.agent.constants import DEFAULT_AGENT_CODE, SPECIALIST_AGENT_CODES
 from database import get_async_session
-from model.agent.subordinates import AgentSubordinateTask
+from model.agent.sessions import AgentRun
 from model.threat.analysis import AnalysisRecord, RiskAssessment
 from model.threat.incidents import ThreatIncident
 from model.threat.investigations import (
     AuditEvent,
+    EvidenceBehaviorLink,
+    EvidenceRelation,
     InvestigationEvidence,
     InvestigationTask,
     InvestigationTaskDependency,
     InvestigationTaskEvent,
 )
-from schema.agent.subordinates import AgentSubordinateStatus
+from schema.agent.sessions import AgentRunStatus
 from schema.system_user.users import SystemUserRole
 from schema.threat.incidents import ThreatIncidentStatus
 from schema.threat.analysis import AnalysisKind, AnalysisReviewStatus
@@ -109,7 +112,7 @@ async def create_investigation_task_in_session(
             conflict=True,
             message="investigation task dependencies must belong to the same incident",
         )
-    now = datetime.now()
+    now = utc_now()
     task = InvestigationTask(
         incident_id=incident_id,
         title=request.title,
@@ -194,7 +197,7 @@ async def activate_investigation_task(
                 )
         task.status = InvestigationTaskStatus.ACTIVE
         task.blocker_reason = ""
-        task.updated_at = datetime.now()
+        task.updated_at = utc_now()
         session.add(task)
         await _audit_task_state(session, task, "Investigation task activated.", agent_code, session_id, user_id)
         schema = await serialize_investigation_task(session, task)
@@ -219,7 +222,7 @@ async def block_investigation_task(
             return InvestigationTaskMutationResult(task=None, conflict=True, message="only active tasks can be blocked")
         task.status = InvestigationTaskStatus.BLOCKED
         task.blocker_reason = reason.strip()
-        task.updated_at = datetime.now()
+        task.updated_at = utc_now()
         session.add(task)
         await _audit_task_state(session, task, "Investigation task blocked.", agent_code, session_id, user_id, {"reason": task.blocker_reason})
         schema = await serialize_investigation_task(session, task)
@@ -250,9 +253,14 @@ async def submit_investigation_task(
                 message="task cannot be submitted with uncovered events: " + ", ".join(map(str, uncovered[:20])),
             )
         active_run = (await session.exec(
-            select(AgentSubordinateTask.run_id).where(
-                AgentSubordinateTask.investigation_task_id == task_id,
-                AgentSubordinateTask.status == AgentSubordinateStatus.RUNNING,
+            select(AgentRun.id).where(
+                AgentRun.investigation_task_id == task_id,
+                AgentRun.parent_run_id.is_not(None),
+                AgentRun.status.in_({
+                    AgentRunStatus.QUEUED,
+                    AgentRunStatus.RUNNING,
+                    AgentRunStatus.WAITING,
+                }),
             ).limit(1)
         )).first()
         if active_run is not None:
@@ -260,7 +268,7 @@ async def submit_investigation_task(
         task.status = InvestigationTaskStatus.REVIEW
         task.result_summary = result_summary.strip()
         task.blocker_reason = ""
-        task.updated_at = datetime.now()
+        task.updated_at = utc_now()
         session.add(task)
         await _audit_task_state(session, task, "Investigation task submitted for review.", agent_code, session_id, user_id)
         schema = await serialize_investigation_task(session, task)
@@ -294,7 +302,7 @@ async def review_investigation_task(
             else InvestigationTaskStatus.ACTIVE
         )
         task.blocker_reason = "" if decision == InvestigationReviewDecision.ACCEPT else reason.strip()
-        task.updated_at = datetime.now()
+        task.updated_at = utc_now()
         session.add(task)
         await _audit_task_state(
             session,
@@ -380,34 +388,29 @@ async def create_investigation_evidence(
             )
         if task.status not in {InvestigationTaskStatus.ACTIVE, InvestigationTaskStatus.BLOCKED}:
             return InvestigationEvidenceMutationResult(evidence=None, conflict=True, message="evidence can only be added to active or blocked tasks")
+        event_ids = [item.event_id for item in request.behavior_links]
         rows = list((await session.exec(
             select(InvestigationTaskEvent)
             .where(
                 InvestigationTaskEvent.task_id == task_id,
-                InvestigationTaskEvent.event_id.in_(request.behavior_event_ids),
+                InvestigationTaskEvent.event_id.in_(event_ids),
             )
             .with_for_update()
         )).all())
-        if len(rows) != len(request.behavior_event_ids):
+        if len(rows) != len(event_ids):
             return InvestigationEvidenceMutationResult(evidence=None, conflict=True, message="evidence event IDs must belong to the task scope")
-        already_covered = [row.event_id for row in rows if row.evidence_id is not None]
-        if already_covered:
-            return InvestigationEvidenceMutationResult(
-                evidence=None,
-                conflict=True,
-                message="task events already have primary evidence: " + ", ".join(map(str, already_covered)),
-            )
         try:
-            await require_incident_behavior_events(session, incident_id, request.behavior_event_ids)
+            await require_incident_behavior_events(session, incident_id, event_ids)
         except ValueError as exc:
             return InvestigationEvidenceMutationResult(evidence=None, conflict=True, message=str(exc))
-        if request.related_evidence_ids:
+        if request.evidence_relations:
+            related_ids = list({item.target_evidence_id for item in request.evidence_relations})
             related = list((await session.exec(
                 select(InvestigationEvidence, InvestigationTask)
                 .join(InvestigationTask, InvestigationTask.id == InvestigationEvidence.task_id)
-                .where(InvestigationEvidence.id.in_(request.related_evidence_ids))
+                .where(InvestigationEvidence.id.in_(related_ids))
             )).all())
-            if len(related) != len(request.related_evidence_ids) or any(
+            if len(related) != len(related_ids) or any(
                 related_task.incident_id != incident_id for _, related_task in related
             ):
                 return InvestigationEvidenceMutationResult(evidence=None, conflict=True, message="related evidence must belong to the same incident")
@@ -415,7 +418,6 @@ async def create_investigation_evidence(
             task_id=task_id,
             statement=request.statement,
             analysis=request.analysis,
-            related_evidence_ids=request.related_evidence_ids,
             created_by_agent_code=agent_code,
             created_from_session_id=session_id,
         )
@@ -423,11 +425,22 @@ async def create_investigation_evidence(
         await session.flush()
         if evidence.id is None:
             raise RuntimeError("investigation evidence id was not generated")
-        now = datetime.now()
-        for row in rows:
-            row.evidence_id = evidence.id
-            row.covered_at = now
-            session.add(row)
+        session.add_all([
+            EvidenceBehaviorLink(
+                evidence_id=evidence.id,
+                event_id=item.event_id,
+                relation=item.relation,
+            )
+            for item in request.behavior_links
+        ])
+        session.add_all([
+            EvidenceRelation(
+                source_evidence_id=evidence.id,
+                target_evidence_id=item.target_evidence_id,
+                relation=item.relation,
+            )
+            for item in request.evidence_relations
+        ])
         await add_audit_event(
             session,
             incident_id=incident_id,
@@ -439,7 +452,10 @@ async def create_investigation_evidence(
             object_type="investigation_evidence",
             object_id=evidence.id,
             summary="Investigation evidence recorded.",
-            details={"behavior_event_ids": request.behavior_event_ids},
+            details={
+                "behavior_links": [item.model_dump(mode="json") for item in request.behavior_links],
+                "evidence_relations": [item.model_dump(mode="json") for item in request.evidence_relations],
+            },
         )
         schema = await serialize_investigation_evidence(session, evidence)
     return InvestigationEvidenceMutationResult(evidence=schema)
@@ -566,9 +582,20 @@ async def _task_dependency_ids(session, task_id):
 
 
 async def _uncovered_event_ids(session, task_id):
+    covered_event_ids = (
+        select(EvidenceBehaviorLink.event_id)
+        .join(
+            InvestigationEvidence,
+            InvestigationEvidence.id == EvidenceBehaviorLink.evidence_id,
+        )
+        .where(InvestigationEvidence.task_id == task_id)
+    )
     return list((await session.exec(
         select(InvestigationTaskEvent.event_id)
-        .where(InvestigationTaskEvent.task_id == task_id, InvestigationTaskEvent.evidence_id.is_(None))
+        .where(
+            InvestigationTaskEvent.task_id == task_id,
+            InvestigationTaskEvent.event_id.notin_(covered_event_ids),
+        )
         .order_by(InvestigationTaskEvent.event_id.asc())
     )).all())
 
@@ -577,23 +604,37 @@ async def serialize_investigation_task(session, task):
     rows = list((await session.exec(
         select(InvestigationTaskEvent).where(InvestigationTaskEvent.task_id == task.id)
     )).all())
+    covered_event_ids = set((await session.exec(
+        select(EvidenceBehaviorLink.event_id)
+        .join(
+            InvestigationEvidence,
+            InvestigationEvidence.id == EvidenceBehaviorLink.evidence_id,
+        )
+        .where(InvestigationEvidence.task_id == task.id)
+    )).all())
     payload = task.model_dump()
     payload.update({
         "dependency_ids": await _task_dependency_ids(session, task.id),
         "behavior_event_ids": sorted(row.event_id for row in rows),
-        "covered_event_ids": sorted(row.event_id for row in rows if row.evidence_id is not None),
+        "covered_event_ids": sorted(covered_event_ids),
     })
     return InvestigationTaskSchema.model_validate(payload)
 
 
 async def serialize_investigation_evidence(session, evidence):
-    event_ids = list((await session.exec(
-        select(InvestigationTaskEvent.event_id)
-        .where(InvestigationTaskEvent.evidence_id == evidence.id)
-        .order_by(InvestigationTaskEvent.event_id.asc())
+    behavior_links = list((await session.exec(
+        select(EvidenceBehaviorLink)
+        .where(EvidenceBehaviorLink.evidence_id == evidence.id)
+        .order_by(EvidenceBehaviorLink.event_id.asc(), EvidenceBehaviorLink.relation.asc())
+    )).all())
+    evidence_relations = list((await session.exec(
+        select(EvidenceRelation)
+        .where(EvidenceRelation.source_evidence_id == evidence.id)
+        .order_by(EvidenceRelation.target_evidence_id.asc(), EvidenceRelation.relation.asc())
     )).all())
     payload = evidence.model_dump()
-    payload["behavior_event_ids"] = event_ids
+    payload["behavior_links"] = [item.model_dump() for item in behavior_links]
+    payload["evidence_relations"] = [item.model_dump() for item in evidence_relations]
     return InvestigationEvidenceSchema.model_validate(payload)
 
 
@@ -615,7 +656,7 @@ async def _activate_ready_dependents(session, completed_task_id):
         )).all())
         if len(completed) == len(dependencies):
             task.status = InvestigationTaskStatus.ACTIVE
-            task.updated_at = datetime.now()
+            task.updated_at = utc_now()
             session.add(task)
             await _audit_task_state(session, task, "Investigation task activated after dependencies completed.", "system", "", 0)
 

@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from datetime import datetime
 import asyncio
 import base64
 import socket
@@ -14,11 +13,13 @@ from database import get_async_session
 from model.egress_proxy.proxies import EgressProxy
 from model.sandbox.containers import SandboxContainer
 from schema.egress_proxy.proxies import EgressProxySchema, EgressProxyType
-from schema.sandbox.containers import SandboxContainerEgressMode
+from schema.common.resources import ResourceLifecycleStatus
+from schema.sandbox.containers import SandboxContainerEgressMode, SandboxContainerStatus
 from service.common.pagination import Page, RESOURCE_PAGE_SIZE, paginate_statement
 from service.egress_proxy.locking import egress_proxy_mutation_lock
 from service.egress_proxy.state import EgressProxyConnection, snapshot_egress_proxy
 from service.sandbox.control_proxy import apply_managed_proxy_egress_to_running_containers
+from utils.time import utc_now
 
 
 EGRESS_PROXY_TEST_URL = "https://www.gstatic.com/generate_204"
@@ -26,8 +27,8 @@ EGRESS_PROXY_TEST_TIMEOUT_SECONDS = 8.0
 
 
 @dataclass(frozen=True)
-class DeleteEgressProxyResult:
-    deleted: bool
+class RetireEgressProxyResult:
+    retired: bool
     not_found: bool = False
     message: str = ""
 
@@ -57,7 +58,7 @@ async def create_egress_proxy(
     proxy_account: str = "",
     proxy_password: str = "",
 ) -> EgressProxySchema:
-    now = datetime.now()
+    now = utc_now()
     proxy = EgressProxy(
         proxy_type=proxy_type,
         proxy_host=proxy_host,
@@ -104,7 +105,10 @@ async def _update_egress_proxy(
 ) -> UpdateEgressProxyResult:
     async with get_async_session() as session:
         proxy = (await session.exec(
-            select(EgressProxy).where(EgressProxy.id == id).with_for_update()
+            select(EgressProxy).where(
+                EgressProxy.id == id,
+                EgressProxy.status == ResourceLifecycleStatus.ACTIVE,
+            ).with_for_update()
         )).one_or_none()
         if proxy is None:
             return UpdateEgressProxyResult(proxy=None, not_found=True, message="egress proxy not found")
@@ -120,7 +124,7 @@ async def _update_egress_proxy(
         if proxy_password is not None:
             proxy.proxy_password = proxy_password
 
-        proxy.updated_at = datetime.now()
+        proxy.updated_at = utc_now()
         session.add(proxy)
         await session.commit()
         await session.refresh(proxy)
@@ -133,27 +137,34 @@ async def _update_egress_proxy(
     )
 
 
-async def delete_egress_proxy(id: int) -> DeleteEgressProxyResult:
+async def retire_egress_proxy(id: int) -> RetireEgressProxyResult:
     async with egress_proxy_mutation_lock(id):
-        return await _delete_egress_proxy(id)
+        return await _retire_egress_proxy(id)
 
 
-async def _delete_egress_proxy(id: int) -> DeleteEgressProxyResult:
+async def _retire_egress_proxy(id: int) -> RetireEgressProxyResult:
     async with get_async_session() as session:
         proxy = (await session.exec(
-            select(EgressProxy).where(EgressProxy.id == id).with_for_update()
+            select(EgressProxy).where(
+                EgressProxy.id == id,
+                EgressProxy.status == ResourceLifecycleStatus.ACTIVE,
+            ).with_for_update()
         )).one_or_none()
         if proxy is None:
-            return DeleteEgressProxyResult(deleted=False, not_found=True, message="egress proxy not found")
+            return RetireEgressProxyResult(retired=False, not_found=True, message="egress proxy not found")
         if await _egress_proxy_has_sandbox_containers(session, id):
-            return DeleteEgressProxyResult(
-                deleted=False,
+            return RetireEgressProxyResult(
+                retired=False,
                 message="egress proxy is used by sandbox containers",
             )
 
-        await session.delete(proxy)
+        now = utc_now()
+        proxy.status = ResourceLifecycleStatus.RETIRED
+        proxy.retired_at = now
+        proxy.updated_at = now
+        session.add(proxy)
         await session.commit()
-        return DeleteEgressProxyResult(deleted=True)
+        return RetireEgressProxyResult(retired=True)
 
 
 async def query_egress_proxies(
@@ -161,7 +172,9 @@ async def query_egress_proxies(
     size: int = RESOURCE_PAGE_SIZE,
     keyword: str = "",
 ) -> Page[EgressProxySchema]:
-    statement = select(EgressProxy).order_by(EgressProxy.id)
+    statement = select(EgressProxy).where(
+        EgressProxy.status == ResourceLifecycleStatus.ACTIVE,
+    ).order_by(EgressProxy.id)
 
     keyword = keyword.strip()
     if keyword:
@@ -185,7 +198,10 @@ async def query_egress_proxies(
 
 async def query_egress_proxy_by_id(id: int) -> EgressProxyConnection | None:
     async with get_async_session() as session:
-        proxy = await session.get(EgressProxy, id)
+        proxy = (await session.exec(select(EgressProxy).where(
+            EgressProxy.id == id,
+            EgressProxy.status == ResourceLifecycleStatus.ACTIVE,
+        ))).one_or_none()
         return snapshot_egress_proxy(proxy) if proxy is not None else None
 
 
@@ -229,6 +245,7 @@ async def _egress_proxy_has_sandbox_containers(session, proxy_id: int) -> bool:
         select(SandboxContainer.id)
         .where(SandboxContainer.egress_mode == SandboxContainerEgressMode.PROXY)
         .where(SandboxContainer.egress_proxy_id == proxy_id)
+        .where(SandboxContainer.status != SandboxContainerStatus.REMOVED)
         .limit(1)
     )
     return result.first() is not None

@@ -4,7 +4,7 @@ from handler.common.http import raise_api_error
 from schema.common.responses import CommonResponse
 from schema.system_user.users import (
     CreateSystemUserRequest,
-    DeleteSystemUserResponse,
+    RetireSystemUserResponse,
     QuerySystemUsersResponse,
     SystemUserLoginRequest,
     SystemUserLoginResponse,
@@ -14,7 +14,6 @@ from schema.system_user.users import (
 from service.system_user.users import (
     SystemUserConflictError,
     create_system_user,
-    delete_system_user,
     query_system_users,
     system_user_login,
     update_system_user,
@@ -35,13 +34,13 @@ async def create_system_user_handler(request: CreateSystemUserRequest) -> Common
     return CommonResponse(data=system_user)
 
 
-async def delete_system_user_handler(id: int) -> CommonResponse:
-    result = await delete_system_user(id)
+async def retire_system_user_handler(id: int) -> CommonResponse:
+    result = await retire_system_user(id)
     if result.not_found:
         raise_api_error(HTTPStatus.NOT_FOUND, "system user not found")
-    if not result.deleted:
+    if not result.retired:
         raise_api_error(HTTPStatus.BAD_REQUEST, result.message)
-    return CommonResponse(data=DeleteSystemUserResponse(id=id))
+    return CommonResponse(data=RetireSystemUserResponse(id=id))
 
 
 async def update_system_user_handler(id: int, request: UpdateSystemUserRequest) -> CommonResponse:
@@ -77,3 +76,4 @@ async def system_user_login_handler(request: SystemUserLoginRequest) -> CommonRe
     if token is None:
         raise_api_error(HTTPStatus.UNAUTHORIZED, "invalid email or password")
     return CommonResponse(data=SystemUserLoginResponse(token=token))
+    retire_system_user,

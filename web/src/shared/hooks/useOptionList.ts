@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type UIEvent } from "react";
 import { showApiError } from "../api/feedback";
+import { PAGINATION_MAXIMUM_PAGE_SIZE } from "../api/generated/constants";
 import { mergeByKey } from "../lib/array";
 
-const OPTION_PAGE_SIZE = 50;
+const OPTION_PAGE_SIZE = PAGINATION_MAXIMUM_PAGE_SIZE;
 const SEARCH_DEBOUNCE_MS = 250;
 const LOAD_MORE_THRESHOLD_PX = 32;
 

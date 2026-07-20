@@ -1,7 +1,7 @@
-from datetime import datetime
-
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_
 from sqlmodel import select
+
+from utils.time import utc_now
 
 from database import get_async_session
 from model.deception.environments import DeceptionEnvironment, DeceptionRevision
@@ -10,18 +10,29 @@ from model.threat.behaviors import BehaviorEvent, BehaviorSensorCursor, ThreatIn
 from model.threat.chains import AttackChain
 from model.threat.incidents import ThreatIncident, ThreatIncidentEnvironment
 from model.threat.intelligence import IntelligenceReport
-from model.threat.investigations import AuditEvent, InvestigationEvidence, InvestigationTask, InvestigationTaskEvent
-from schema.deception.environments import DeceptionEnvironmentSchema
+from model.threat.investigations import (
+    AuditEvent,
+    EvidenceBehaviorLink,
+    InvestigationEvidence,
+    InvestigationTask,
+    InvestigationTaskEvent,
+)
+from schema.deception.environments import DeceptionEnvironmentSchema, DeceptionRevisionSchema
 from schema.system_user.users import SystemUserRole
 from schema.threat.analysis import AnalysisKind
-from schema.threat.behaviors import BehaviorEventCategory
+from schema.threat.behaviors import BehaviorEventCategory, BehaviorEventSchema
 from schema.threat.investigations import AuditEventSchema
 from schema.threat.workspace import (
     ThreatIncidentWorkspaceSchema,
     ThreatSensorCoverageSchema,
     ThreatSensorCoverageStatus,
     ThreatTimelineItemKind,
-    ThreatTimelineItemSchema,
+    AuditEventTimelineItem,
+    BehaviorEventTimelineItem,
+    DeceptionRevisionTimelineItem,
+    InvestigationEvidenceTimelineItem,
+    InvestigationTaskTimelineItem,
+    ThreatTimelineCursor,
     ThreatTimelineResponse,
     ThreatWorkspaceCounts,
 )
@@ -31,6 +42,11 @@ from service.threat.analysis import (
     serialize_risk_assessment,
 )
 from service.threat.chains import serialize_attack_chain
+from service.deception.environments import serialize_deception_revision
+from service.threat.investigations import (
+    serialize_investigation_evidence,
+    serialize_investigation_task,
+)
 
 
 async def get_incident_workspace(incident_id: int, *, user_id: int, user_role: SystemUserRole):
@@ -94,12 +110,16 @@ async def get_incident_workspace(incident_id: int, *, user_id: int, user_role: S
         scoped_count = int((await session.exec(select(func.count(func.distinct(InvestigationTaskEvent.event_id))).select_from(InvestigationTaskEvent).join(
             InvestigationTask, InvestigationTask.id == InvestigationTaskEvent.task_id
         ).where(InvestigationTask.incident_id == incident_id))).one())
-        covered_count = int((await session.exec(select(func.count(func.distinct(InvestigationTaskEvent.event_id))).select_from(InvestigationTaskEvent).join(
-            InvestigationTask, InvestigationTask.id == InvestigationTaskEvent.task_id
-        ).where(
-            InvestigationTask.incident_id == incident_id,
-            InvestigationTaskEvent.evidence_id.is_not(None),
-        ))).one())
+        covered_count = int((await session.exec(
+            select(func.count(func.distinct(EvidenceBehaviorLink.event_id)))
+            .select_from(EvidenceBehaviorLink)
+            .join(
+                InvestigationEvidence,
+                InvestigationEvidence.id == EvidenceBehaviorLink.evidence_id,
+            )
+            .join(InvestigationTask, InvestigationTask.id == InvestigationEvidence.task_id)
+            .where(InvestigationTask.incident_id == incident_id)
+        )).one())
         indicator_count = int((await session.exec(select(func.count()).select_from(AnalysisRecord).where(
             AnalysisRecord.incident_id == incident_id,
             AnalysisRecord.kind == AnalysisKind.INDICATOR,
@@ -131,7 +151,14 @@ async def get_incident_workspace(incident_id: int, *, user_id: int, user_role: S
         )
 
 
-async def get_incident_timeline(incident_id: int, *, before: datetime | None, limit: int, user_id: int, user_role: SystemUserRole):
+async def get_incident_timeline(
+    incident_id: int,
+    *,
+    cursor: ThreatTimelineCursor | None,
+    limit: int,
+    user_id: int,
+    user_role: SystemUserRole,
+):
     async with get_async_session() as session:
         incident = await session.get(ThreatIncident, incident_id)
         if incident is None or (user_role != SystemUserRole.ADMIN and incident.owner_id != user_id):
@@ -144,43 +171,120 @@ async def get_incident_timeline(incident_id: int, *, before: datetime | None, li
             .join(ThreatIncidentBehaviorEvent, ThreatIncidentBehaviorEvent.event_id == BehaviorEvent.id)
             .where(
                 ThreatIncidentBehaviorEvent.incident_id == incident_id,
-                *((BehaviorEvent.observed_at < before,) if before else ()),
+                *(_timeline_cursor_condition(
+                    BehaviorEvent.observed_at,
+                    BehaviorEvent.id,
+                    ThreatTimelineItemKind.BEHAVIOR_EVENT,
+                    cursor,
+                ),),
             )
-            .order_by(BehaviorEvent.observed_at.desc())
-            .limit(limit)
+            .order_by(BehaviorEvent.observed_at.desc(), BehaviorEvent.id.desc())
+            .limit(limit + 1)
         )).all())
         audits = list((await session.exec(select(AuditEvent).where(
             AuditEvent.incident_id == incident_id,
-            *((AuditEvent.created_at < before,) if before else ()),
-        ).order_by(AuditEvent.created_at.desc()).limit(limit))).all())
+            _timeline_cursor_condition(
+                AuditEvent.created_at,
+                AuditEvent.id,
+                ThreatTimelineItemKind.AUDIT_EVENT,
+                cursor,
+            ),
+        ).order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc()).limit(limit + 1))).all())
         tasks = list((await session.exec(select(InvestigationTask).where(
             InvestigationTask.incident_id == incident_id,
-            *((InvestigationTask.updated_at < before,) if before else ()),
-        ).order_by(InvestigationTask.updated_at.desc()).limit(limit))).all())
+            _timeline_cursor_condition(
+                InvestigationTask.updated_at,
+                InvestigationTask.id,
+                ThreatTimelineItemKind.INVESTIGATION_TASK,
+                cursor,
+            ),
+        ).order_by(InvestigationTask.updated_at.desc(), InvestigationTask.id.desc()).limit(limit + 1))).all())
         evidence = list((await session.exec(select(InvestigationEvidence).join(
             InvestigationTask, InvestigationTask.id == InvestigationEvidence.task_id
         ).where(
             InvestigationTask.incident_id == incident_id,
-            *((InvestigationEvidence.created_at < before,) if before else ()),
-        ).order_by(InvestigationEvidence.created_at.desc()).limit(limit))).all())
+            _timeline_cursor_condition(
+                InvestigationEvidence.created_at,
+                InvestigationEvidence.id,
+                ThreatTimelineItemKind.INVESTIGATION_EVIDENCE,
+                cursor,
+            ),
+        ).order_by(InvestigationEvidence.created_at.desc(), InvestigationEvidence.id.desc()).limit(limit + 1))).all())
         revisions = list((await session.exec(select(DeceptionRevision).where(
             DeceptionRevision.environment_id.in_(environment_ids or [-1]),
-            *((DeceptionRevision.created_at < before,) if before else ()),
-        ).order_by(DeceptionRevision.created_at.desc()).limit(limit))).all())
+            _timeline_cursor_condition(
+                DeceptionRevision.created_at,
+                DeceptionRevision.id,
+                ThreatTimelineItemKind.DECEPTION_REVISION,
+                cursor,
+            ),
+        ).order_by(DeceptionRevision.created_at.desc(), DeceptionRevision.id.desc()).limit(limit + 1))).all())
         items = [
-            *[ThreatTimelineItemSchema(kind=ThreatTimelineItemKind.BEHAVIOR_EVENT, occurred_at=item.observed_at, object_id=str(item.id), environment_id=item.environment_id, payload=item.model_dump(mode="json")) for item in behavior],
-            *[ThreatTimelineItemSchema(kind=ThreatTimelineItemKind.AUDIT_EVENT, occurred_at=item.created_at, object_id=str(item.id), environment_id=item.environment_id, task_id=item.task_id, payload=item.model_dump(mode="json")) for item in audits],
-            *[ThreatTimelineItemSchema(kind=ThreatTimelineItemKind.INVESTIGATION_TASK, occurred_at=item.updated_at, object_id=str(item.id), task_id=item.id, payload=item.model_dump(mode="json")) for item in tasks],
-            *[ThreatTimelineItemSchema(kind=ThreatTimelineItemKind.INVESTIGATION_EVIDENCE, occurred_at=item.created_at, object_id=str(item.id), task_id=item.task_id, payload=item.model_dump(mode="json")) for item in evidence],
-            *[ThreatTimelineItemSchema(kind=ThreatTimelineItemKind.DECEPTION_REVISION, occurred_at=item.created_at, object_id=str(item.id), environment_id=item.environment_id, payload=item.model_dump(mode="json")) for item in revisions],
+            *[BehaviorEventTimelineItem(
+                occurred_at=item.observed_at,
+                object_id=item.id,
+                environment_id=item.environment_id,
+                payload=BehaviorEventSchema.model_validate(item),
+            ) for item in behavior],
+            *[AuditEventTimelineItem(
+                occurred_at=item.created_at,
+                object_id=item.id,
+                environment_id=item.environment_id,
+                task_id=item.task_id,
+                payload=AuditEventSchema.model_validate(item),
+            ) for item in audits],
+            *[InvestigationTaskTimelineItem(
+                occurred_at=item.updated_at,
+                object_id=item.id,
+                task_id=item.id,
+                payload=await serialize_investigation_task(session, item),
+            ) for item in tasks],
+            *[InvestigationEvidenceTimelineItem(
+                occurred_at=item.created_at,
+                object_id=item.id,
+                task_id=item.task_id,
+                payload=await serialize_investigation_evidence(session, item),
+            ) for item in evidence],
+            *[DeceptionRevisionTimelineItem(
+                occurred_at=item.created_at,
+                object_id=item.id,
+                environment_id=item.environment_id,
+                payload=await serialize_deception_revision(session, item),
+            ) for item in revisions],
         ]
-        items.sort(key=lambda item: item.occurred_at, reverse=True)
+        items.sort(key=_timeline_key, reverse=True)
         selected = items[:limit]
         return ThreatTimelineResponse(
             items=selected,
-            next_before=selected[-1].occurred_at if len(items) > limit and selected else None,
+            next_cursor=(
+                ThreatTimelineCursor(
+                    occurred_at=selected[-1].occurred_at,
+                    kind=selected[-1].kind,
+                    object_id=selected[-1].object_id,
+                )
+                if len(items) > limit and selected
+                else None
+            ),
             has_more=len(items) > limit,
         )
+
+
+def _timeline_cursor_condition(timestamp_column, id_column, kind, cursor):
+    if cursor is None:
+        return timestamp_column.is_not(None)
+    same_timestamp_condition = (
+        id_column < cursor.object_id
+        if kind == cursor.kind
+        else kind.value < cursor.kind.value
+    )
+    return or_(
+        timestamp_column < cursor.occurred_at,
+        and_(timestamp_column == cursor.occurred_at, same_timestamp_condition),
+    )
+
+
+def _timeline_key(item):
+    return item.occurred_at, item.kind.value, item.object_id
 
 
 async def _current_analysis(session, incident_id, kind, model, serializer):
@@ -251,7 +355,7 @@ async def _sensor_coverage(session, environment_ids: list[int]) -> list[ThreatSe
             if cursor is not None
             else latest_transition.ingested_at
             if latest_transition is not None
-            else datetime.now()
+            else utc_now()
         )
         result.append(ThreatSensorCoverageSchema(
             environment_id=key[0],

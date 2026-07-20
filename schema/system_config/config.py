@@ -2,20 +2,19 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from config import (
     AgentConfig,
-    AgentPoolConfig,
     AgentRuntimeConfig,
     BehaviorCaptureConfig,
     LightRAGConfig,
     ThreatAutomationConfig,
     validate_runtime_agent_set,
 )
+from schema.agent.sessions import AgentCode
 
 
 class InstanceConfigSchema(BaseModel):
     model_config = ConfigDict(extra="forbid", from_attributes=True)
 
-    agents: dict[str, AgentConfig] = Field(default_factory=dict)
-    agent_pool: AgentPoolConfig = Field(default_factory=AgentPoolConfig)
+    agents: dict[AgentCode, AgentConfig] = Field(default_factory=dict)
     agent_runtime: AgentRuntimeConfig = Field(default_factory=AgentRuntimeConfig)
     behavior_capture: BehaviorCaptureConfig = Field(default_factory=BehaviorCaptureConfig)
     threat_automation: ThreatAutomationConfig = Field(default_factory=ThreatAutomationConfig)
@@ -43,8 +42,7 @@ class UpdateAgentConfigRequest(BaseModel):
 class UpdateInstanceConfigRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    agents: dict[str, UpdateAgentConfigRequest]
-    agent_pool: AgentPoolConfig
+    agents: dict[AgentCode, UpdateAgentConfigRequest]
     agent_runtime: AgentRuntimeConfig
     behavior_capture: BehaviorCaptureConfig
     threat_automation: ThreatAutomationConfig

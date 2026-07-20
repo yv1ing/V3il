@@ -14,6 +14,7 @@ from schema.sandbox.containers import (
     SandboxContainerStatus,
 )
 from schema.sandbox.images import SandboxImageSchema
+from schema.common.resources import ResourceLifecycleStatus
 from schema.system_user.users import SystemUserRole
 from service.common.pagination import Page, RESOURCE_PAGE_SIZE, paginate_statement
 from service.sandbox.egress import sandbox_egress_label
@@ -80,8 +81,10 @@ def _to_record(row) -> SandboxContainerRecord:
             provisioned_for_revision_id=container.provisioned_for_revision_id,
             port_mappings=tuple(dict(mapping) for mapping in container.port_mappings),
             status=container.status,
+            generation=container.generation,
             created_at=container.created_at,
             updated_at=container.updated_at,
+            removed_at=container.removed_at,
         ),
         image_name=row[1],
         supports_tor=row[2],
@@ -142,11 +145,13 @@ def sandbox_container_schema(
         behavior_sensor_id=container.behavior_sensor_id,
         port_mappings=container.port_mappings,
         status=container.status,
+        generation=container.generation,
         owner_id=container.owner_id,
         owner_username=record.owner_username,
         can_manage=sandbox_container_can_manage(container, user_id, user_role),
         created_at=container.created_at,
         updated_at=container.updated_at,
+        removed_at=container.removed_at,
     )
 
 
@@ -157,7 +162,9 @@ async def query_sandbox_containers(
     size: int = RESOURCE_PAGE_SIZE,
     keyword: str = "",
 ) -> Page[SandboxContainerRecord]:
-    statement = _base_container_record_statement().order_by(SandboxContainer.id)
+    statement = _base_container_record_statement().where(
+        SandboxContainer.status != SandboxContainerStatus.REMOVED,
+    ).order_by(SandboxContainer.id)
     if user_role != SystemUserRole.ADMIN:
         statement = statement.where(SandboxContainer.owner_id == user_id)
     statement = _apply_keyword_filter(statement, keyword)
@@ -172,7 +179,9 @@ async def query_available_sandbox_containers(
     size: int = RESOURCE_PAGE_SIZE,
     keyword: str = "",
 ) -> Page[SandboxContainerRecord]:
-    statement = _base_container_record_statement().order_by(SandboxContainer.id)
+    statement = _base_container_record_statement().where(
+        SandboxContainer.status != SandboxContainerStatus.REMOVED,
+    ).order_by(SandboxContainer.id)
     if user_role != SystemUserRole.ADMIN:
         statement = statement.where(SandboxContainer.owner_id == user_id)
     statement = _apply_available_filter(statement, include_non_running)
@@ -186,7 +195,9 @@ async def query_sandbox_container_host_options(
     size: int,
     keyword: str,
 ) -> Page[SandboxContainerHostOptionSchema]:
-    statement = select(ManagedHost).order_by(ManagedHost.id)
+    statement = select(ManagedHost).where(
+        ManagedHost.status == ResourceLifecycleStatus.ACTIVE,
+    ).order_by(ManagedHost.id)
     keyword = keyword.strip()
     if keyword:
         pattern = f"%{keyword}%"
@@ -212,7 +223,9 @@ async def query_sandbox_container_image_options(
     size: int,
     keyword: str,
 ) -> Page[SandboxImageSchema]:
-    statement = select(SandboxImage).order_by(SandboxImage.id)
+    statement = select(SandboxImage).where(
+        SandboxImage.status == ResourceLifecycleStatus.ACTIVE,
+    ).order_by(SandboxImage.id)
     keyword = keyword.strip()
     if keyword:
         pattern = f"%{keyword}%"
@@ -235,7 +248,7 @@ async def sandbox_container_is_manageable_by_user(
 ) -> bool | None:
     async with get_async_session() as session:
         container = await session.get(SandboxContainer, id)
-        if container is None:
+        if container is None or container.status == SandboxContainerStatus.REMOVED:
             return None
         return sandbox_container_can_manage(container, user_id, user_role)
 
@@ -248,7 +261,10 @@ def _apply_available_filter(
         DeceptionEnvironment.sandbox_container_id == SandboxContainer.id
     )
     if include_non_running:
-        return statement.where(~bound_to_environment)
+        return statement.where(
+            SandboxContainer.status != SandboxContainerStatus.REMOVED,
+            ~bound_to_environment,
+        )
     return statement.where(
         SandboxContainer.status == SandboxContainerStatus.RUNNING,
         ~bound_to_environment,

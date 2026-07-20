@@ -35,6 +35,7 @@ from schema.detection.rules import (
     SuppressionRuleDefinition,
 )
 from schema.threat.investigations import AuditActorType
+from schema.system_user.users import SystemUserRole
 from service.detection.rules import (
     create_rule,
     create_rule_version,
@@ -491,7 +492,7 @@ async def analyze_rule_matches(
             statement = select(BehaviorDecision, BehaviorEvent).join(
                 BehaviorEvent, BehaviorEvent.id == BehaviorDecision.event_id,
             ).join(DeceptionEnvironment, DeceptionEnvironment.id == BehaviorEvent.environment_id)
-            if ctx.context.user.role.value != "admin":
+            if ctx.context.user.role != SystemUserRole.ADMIN:
                 statement = statement.where(DeceptionEnvironment.owner_id == ctx.context.user.id)
             rows = list((await session.exec(statement.order_by(BehaviorDecision.created_at.desc()).limit(1000))).all())
         items = []
@@ -546,7 +547,7 @@ async def _can_read_rule(session, rule_id: int, context: AgentRuntimeContext) ->
     rule = await session.get(DetectionRule, rule_id)
     if rule is None:
         return False
-    if context.user.role.value == "admin" or rule.scope == DetectionRuleScope.GLOBAL:
+    if context.user.role == SystemUserRole.ADMIN or rule.scope == DetectionRuleScope.GLOBAL:
         return True
     if rule.scope != DetectionRuleScope.ENVIRONMENT or rule.environment_id is None:
         return False

@@ -3,10 +3,11 @@ from __future__ import annotations
 import asyncio
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime
 
 import httpx
 from sqlmodel import select
+
+from utils.time import utc_now
 
 from config import get_config
 from database import get_async_session
@@ -204,8 +205,8 @@ async def _collect_sensor(target: _SensorTarget) -> None:
         current.active_bundle_hash = active_bundle_hash
         current.status = ManagedHostSensorStatus.HEALTHY
         current.last_error = ""
-        current.last_heartbeat_at = datetime.now()
-        current.updated_at = datetime.now()
+        current.last_heartbeat_at = utc_now()
+        current.updated_at = utc_now()
         session.add(current)
 
 
@@ -216,7 +217,7 @@ async def _mark_sensor_issue(sensor_id: int, error: str) -> None:
             return
         sensor.status = ManagedHostSensorStatus.DEGRADED
         sensor.last_error = error[:4000]
-        sensor.updated_at = datetime.now()
+        sensor.updated_at = utc_now()
         session.add(sensor)
 
 

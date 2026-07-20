@@ -1,12 +1,12 @@
 import { Tag } from "@douyinfe/semi-ui";
 import { Pencil, Users } from "lucide-react";
 import { useMemo, useState } from "react";
-import { createSystemUser, deleteSystemUser, querySystemUsers, updateSystemUser } from "../../shared/api/systemUsers";
+import { createSystemUser, querySystemUsers, retireSystemUser, updateSystemUser } from "../../shared/api/systemUsers";
 import { SYSTEM_USER_ROLE, SYSTEM_USER_ROLE_VALUES } from "../../shared/api/generated/constants";
 import type { CreateSystemUserRequest, SystemUser, UpdateSystemUserRequest } from "../../shared/api/types";
 import { PagedResourceTable } from "../../shared/components/PagedResourceTable";
 import type { ResourceColumn } from "../../shared/components/ResourceTable";
-import { DeleteRowAction, ResourceIdentity, ResourceSecretText, RowActionButton, RowActions } from "../../shared/components/ResourceCells";
+import { ResourceIdentity, ResourceSecretText, RetireRowAction, RowActionButton, RowActions } from "../../shared/components/ResourceCells";
 import { useAdminResourceHeader } from "../../shared/hooks/useAdminResourceHeader";
 import { usePagedResourceList } from "../../shared/hooks/usePagedResourceList";
 import { useResourceAction } from "../../shared/hooks/useResourceAction";
@@ -21,8 +21,8 @@ type ModalState = { mode: "create" } | { mode: "edit"; user: SystemUser } | null
 export function SystemUsersPage() {
   const users = usePagedResourceList<SystemUser>({ query: querySystemUsers });
   const [modal, setModal] = useState<ModalState>(null);
-  const { run: deleteUser, busyId: deletingUserId } = useResourceAction<SystemUser>(
-    (user) => deleteSystemUser(user.id),
+  const { run: retireUser, busyId: retiringUserId } = useResourceAction<SystemUser>(
+    (user) => retireSystemUser(user.id),
     users.loadItems,
   );
 
@@ -67,8 +67,8 @@ export function SystemUsersPage() {
           <RowActionButton icon={<Pencil size={15} />} label={`Edit ${user.username}`}
             onClick={() => setModal({ mode: "edit", user })}
           />
-          <DeleteRowAction title="Delete user" content={`Delete ${user.username}?`} label={`Delete ${user.username}`}
-            loading={deletingUserId === user.id} onConfirm={() => void deleteUser(user)}
+          <RetireRowAction title="Retire user" content={`Retire ${user.username}?`} label={`Retire ${user.username}`}
+            loading={retiringUserId === user.id} onConfirm={() => void retireUser(user)}
           />
         </RowActions>
       ),

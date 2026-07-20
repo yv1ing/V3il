@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --config vite.app.config.ts --host 0.0.0.0",
-    "generate:api": "openapi-typescript ./openapi.json -o ./src/shared/api/generated/schema.ts",
+    "generate:api": "openapi-typescript ./openapi.json -o ./src/shared/api/generated/schema.ts && node ./scripts/generate-contract.mjs",
     "typecheck": "tsc --noEmit",
     "build": "npm run generate:api && tsc --noEmit && vite build --config vite.app.config.ts",
     "build:landing": "tsc --noEmit && vite build --config vite.landing.config.ts",

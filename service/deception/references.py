@@ -4,7 +4,6 @@ import json
 import shutil
 import tempfile
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from unicodedata import category
 from uuid import uuid4
@@ -12,6 +11,7 @@ from uuid import uuid4
 from fastapi import UploadFile
 
 from logger import get_logger
+from utils.time import utc_now
 from schema.deception.environments import (
     DeceptionReferenceBundleSchema,
     DeceptionReferenceFileSchema,
@@ -190,7 +190,7 @@ async def copy_reference_bundle_to_container(
 async def finalize_reference_bundle(environment_id: int, container_id: int) -> None:
     directory = _environment_directory(environment_id)
     bundle = await _require_reference_bundle(environment_id)
-    copied_at = datetime.now()
+    copied_at = utc_now()
     files = [
         item.model_copy(update={
             "state": DeceptionReferenceFileState.COPIED,

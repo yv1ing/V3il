@@ -1,6 +1,11 @@
 import { Button, InputNumber, Select } from "@douyinfe/semi-ui";
 import { Plug, Plus, Trash2 } from "lucide-react";
-import type { SandboxContainerPortMapping } from "../../shared/api/types";
+import {
+  FIELD_CONSTRAINTS,
+  SANDBOX_CONTAINER_PROTOCOL,
+  SANDBOX_CONTAINER_PROTOCOL_VALUES,
+} from "../../shared/api/generated/constants";
+import type { SandboxContainerPortMapping, SandboxContainerProtocol } from "../../shared/api/types";
 import { createClientId } from "../../shared/lib/id";
 
 export type PortMappingFormValue = SandboxContainerPortMapping & {
@@ -14,17 +19,19 @@ type PortMappingEditorProps = {
   onChange: (id: string, patch: Partial<PortMappingFormValue>) => void;
 };
 
-const PROTOCOL_OPTIONS = [
-  { label: "TCP", value: "tcp" },
-  { label: "UDP", value: "udp" },
-] satisfies Array<{ label: string; value: SandboxContainerPortMapping["protocol"] }>;
+const PROTOCOL_OPTIONS = SANDBOX_CONTAINER_PROTOCOL_VALUES.map((protocol) => ({
+  label: protocol.toUpperCase(),
+  value: protocol,
+}));
+const PROTOCOL_SET = new Set<string>(SANDBOX_CONTAINER_PROTOCOL_VALUES);
+const PORT_CONSTRAINTS = FIELD_CONSTRAINTS.SandboxContainerPortMapping;
 
 export function createEmptyPortMapping(): PortMappingFormValue {
   return {
     id: createClientId("port-mapping"),
     container_port: 8080,
     host_port: 8080,
-    protocol: "tcp",
+    protocol: SANDBOX_CONTAINER_PROTOCOL.TCP,
   };
 }
 
@@ -51,21 +58,25 @@ export function PortMappingEditor({
           <InputNumber
             prefix={<Plug size={14} />}
             value={mapping.host_port}
-            min={1}
-            max={65535}
+            min={PORT_CONSTRAINTS.host_port.minimum}
+            max={PORT_CONSTRAINTS.host_port.maximum}
             onChange={(value) => typeof value === "number" && onChange(mapping.id, { host_port: value })}
           />
           <span className="port-arrow">to</span>
           <InputNumber
             value={mapping.container_port}
-            min={1}
-            max={65535}
+            min={PORT_CONSTRAINTS.container_port.minimum}
+            max={PORT_CONSTRAINTS.container_port.maximum}
             onChange={(value) => typeof value === "number" && onChange(mapping.id, { container_port: value })}
           />
           <Select
             value={mapping.protocol}
             optionList={PROTOCOL_OPTIONS}
-            onChange={(value) => (value === "tcp" || value === "udp") && onChange(mapping.id, { protocol: value })}
+            onChange={(value) => {
+              if (typeof value === "string" && PROTOCOL_SET.has(value)) {
+                onChange(mapping.id, { protocol: value as SandboxContainerProtocol });
+              }
+            }}
           />
           <Button
             icon={<Trash2 size={14} />}

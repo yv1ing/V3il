@@ -2,8 +2,8 @@ from fastapi import APIRouter, Depends, Query, WebSocket
 
 from handler.host.hosts import (
     create_managed_host_handler,
-    delete_managed_host_handler,
-    delete_managed_host_image_handler,
+    retire_managed_host_handler,
+    remove_managed_host_image_handler,
     handle_host_shell_stream,
     list_managed_host_images_handler,
     pull_managed_host_images_handler,
@@ -14,7 +14,7 @@ from middleware.system_user import require_admin
 from router.common.responses import BAD_REQUEST_RESPONSE, COMMON_ERROR_RESPONSES, not_found_response
 from schema.common.responses import CommonResponse
 from schema.host.hosts import (
-    DeleteManagedHostResponse,
+    RetireManagedHostResponse,
     ListManagedHostImagesResponse,
     ManagedHostSchema,
     PullManagedHostImagesResponse,
@@ -56,11 +56,11 @@ router.add_api_route(
 )
 
 router.add_api_route(
-    "/{id}",
-    delete_managed_host_handler,
-    methods=["DELETE"],
+    "/{id}/retire",
+    retire_managed_host_handler,
+    methods=["POST"],
     dependencies=ADMIN_ONLY,
-    response_model=CommonResponse[DeleteManagedHostResponse],
+    response_model=CommonResponse[RetireManagedHostResponse],
     responses={**COMMON_ERROR_RESPONSES, **BAD_REQUEST_RESPONSE, **NOT_FOUND_RESPONSE},
 )
 
@@ -93,7 +93,7 @@ router.add_api_route(
 
 router.add_api_route(
     "/{id}/images/remove",
-    delete_managed_host_image_handler,
+    remove_managed_host_image_handler,
     methods=["POST"],
     dependencies=ADMIN_ONLY,
     response_model=CommonResponse,

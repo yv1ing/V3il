@@ -1,5 +1,6 @@
 import { Tag } from "@douyinfe/semi-ui";
 import { Box } from "lucide-react";
+import type { ReactNode } from "react";
 import type { SandboxContainer } from "../../shared/api/types";
 import { OptionListSelect } from "../../shared/components/OptionListSelect";
 import type { OptionListResult } from "../../shared/hooks/useOptionList";
@@ -12,6 +13,10 @@ type SandboxSelectorProps = {
   value: number | null;
   className?: string;
   disabled?: boolean;
+  prefix?: ReactNode;
+  placeholder?: string;
+  emptyContent?: string;
+  ariaLabel?: string;
   onChange: (containerId: number | null) => void;
 };
 
@@ -23,24 +28,29 @@ export function SandboxSelector({
   value,
   className = "",
   disabled = false,
+  prefix = <Box size={15} />,
+  placeholder = "Select sandbox",
+  emptyContent = "No sandbox",
+  ariaLabel = "Select sandbox",
   onChange,
 }: SandboxSelectorProps) {
   const optionList = containers.map((container) => ({
     label: renderContainerOption(container),
     value: container.id,
   }));
-  const selectedContainer = containers.find((container) => container.id === value) ?? null;
+  const selectedContainer = source.knownItems.find((container) => container.id === value) ?? null;
 
   return (
-    <div className={cx("sandbox-selector", className)}>
+    <div className={cx("sandbox-selector", className)} title={ariaLabel}>
       <OptionListSelect
         source={source}
-        prefix={<Box size={15} />}
+        aria-label={ariaLabel}
+        prefix={prefix}
         value={value ?? undefined}
         optionList={optionList}
-        renderSelectedItem={() => renderContainerId(selectedContainer?.container_hash ?? "")}
-        placeholder={source.busy ? "Loading sandboxes" : "Select sandbox"}
-        emptyContent="No sandbox"
+        renderSelectedItem={() => selectedContainer?.container_name ?? renderContainerId(selectedContainer?.container_hash ?? "")}
+        placeholder={source.busy ? "Loading sandboxes" : placeholder}
+        emptyContent={emptyContent}
         disabled={disabled || containers.length === 0}
         showClear={!disabled}
         onClear={() => onChange(null)}

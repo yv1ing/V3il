@@ -84,9 +84,9 @@ const planes: CardItem[] = [
   {
     title: "Control and Orchestration",
     kicker: "Coordination",
-    text: "Coordinates resources, workflows, Agent responsibilities, recovery, and review across the platform.",
+    text: "Maintains durable Agent work, resource lifecycles, specialist responsibilities, recovery, and review across the platform.",
     icon: Braces,
-    items: ["Resource lifecycle", "Task coordination", "Human oversight"],
+    items: ["Durable collaboration", "Resource lifecycle", "Human oversight"],
   },
   {
     title: "Deception Runtime",
@@ -101,6 +101,37 @@ const planes: CardItem[] = [
     text: "Connects behavior, investigation tasks, evidence, analytical history, environment changes, risk decisions, and reporting.",
     icon: FileCheck2,
     items: ["Behavior timeline", "Reviewable analysis", "Intelligence delivery"],
+  },
+];
+
+const agentExecutionModel: CardItem[] = [
+  {
+    title: "Session",
+    kicker: "Workspace",
+    text: "Keeps one durable collaboration history for an operator chat, Threat Incident, or Deception Environment.",
+    icon: Workflow,
+    items: ["Business scope", "Ordered history", "Operator continuity"],
+  },
+  {
+    title: "Run",
+    kicker: "Objective",
+    text: "Represents one accepted operator request, specialist assignment, or continuation with a clear owner and outcome.",
+    icon: ClipboardCheck,
+    items: ["Accepted work", "Specialist delegation", "Explicit dependency"],
+  },
+  {
+    title: "Attempt",
+    kicker: "Execution",
+    text: "Defines one execution of a Run and the boundary used to resume work after an interruption or recovery decision.",
+    icon: Activity,
+    items: ["Execution ownership", "Recovery boundary", "Accepted outcome"],
+  },
+  {
+    title: "Context",
+    kicker: "Memory",
+    text: "Preserves role-specific decisions, evidence, tool results, unresolved questions, and provenance across long investigations.",
+    icon: Database,
+    items: ["Role isolation", "Evidence provenance", "Long-term continuity"],
   },
 ];
 
@@ -147,7 +178,7 @@ const workbenchSurfaces: CardItem[] = [
   { title: "Incident Workspace", text: "Investigate behavior, evidence, analysis, environment changes, decisions, and reports in context.", icon: Crosshair },
   { title: "Detection", text: "Develop and operate Zeek and behavior detection policy.", icon: Radio },
   { title: "Threat Intelligence", text: "Review indicators, attacker profiles, risk, and intelligence reports.", icon: FileSearch },
-  { title: "Agent Operations", text: "Track ownership, specialist work, coordination, and review.", icon: Workflow },
+  { title: "Agent Operations", text: "Follow active work, specialist dependencies, recovery, and review across durable sessions.", icon: Workflow },
   { title: "Knowledge Base", text: "Retrieve prior reports, research, and related security context.", icon: Database },
   { title: "Infrastructure", text: "Operate the hosts, images, containers, network routes, terminals, and files behind the platform.", icon: Server },
 ];
@@ -228,6 +259,16 @@ export function LandingContent({ logoSrc, primaryAction }: LandingContentProps) 
         </div>
       </Section>
 
+      <Section
+        eyebrow="Agent collaboration model"
+        title="Durable work with explicit execution and recovery boundaries."
+        description="Session, Run, Attempt, and Context give every operator request and specialist contribution a stable place in the investigation. Delegation, Sandbox work, recovery decisions, and reconnects return to the same accepted history."
+      >
+        <div className="landing-card-grid landing-card-grid-4">
+          {agentExecutionModel.map((item) => <Card key={item.title} item={item} accent />)}
+        </div>
+      </Section>
+
       <Section eyebrow="Core workflow" title="The environment, investigation, and response move through the same operating model.">
         <div className="landing-card-grid landing-card-grid-5">
           {runtimePath.map((item, index) => <Card key={item.title} item={item} index={index} arrow={index < runtimePath.length - 1} />)}
@@ -271,7 +312,7 @@ export function LandingContent({ logoSrc, primaryAction }: LandingContentProps) 
         </div>
       </Section>
 
-      <Section eyebrow="Specialist team" title="Five roles bring different judgment to the same Incident.">
+      <Section eyebrow="Agent Defense Team" title="Five roles bring different judgment to the same Incident.">
         <div className="landing-card-grid landing-card-grid-3">
           {agents.map((agent) => <AgentCard key={agent.code} agent={agent} />)}
         </div>
@@ -320,7 +361,7 @@ function OperationMeshPanel() {
     <div className="landing-ops-panel" aria-label="Autonomous blue-team collaboration model">
       <div className="landing-ops-panel-heading">
         <div>
-          <span className="page-eyebrow">Investigation team</span>
+          <span className="page-eyebrow">Agent Defense Team</span>
           <h2>One Incident, five perspectives, shared evidence.</h2>
         </div>
         <span className="landing-live-status"><i /> Investigation active</span>

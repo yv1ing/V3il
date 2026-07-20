@@ -37,15 +37,7 @@ cd ..
 
 需要承载欺骗环境的 Managed Host 应提前准备相同镜像，或使用团队现有的镜像分发流程同步。
 
-## 3. 启动服务
-
-开发部署：
-
-```bash
-docker compose -f docker-compose.dev.yml up -d --build
-```
-
-长期运行：
+## 3. 启动平台
 
 ```bash
 docker compose -f docker-compose.prod.yml up -d --build

@@ -1,14 +1,13 @@
-from datetime import datetime
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Response
 
 from handler.threat.incidents import (
-    create_threat_incident_session_handler,
-    delete_threat_incident_session_handler,
+    ensure_threat_incident_session_handler,
+    get_threat_incident_session_handler,
     get_threat_incident_handler,
     get_threat_incident_timeline_handler,
     get_threat_incident_workspace_handler,
-    list_threat_incident_sessions_handler,
     query_threat_incidents_handler,
     transition_threat_incident_handler,
     update_threat_incident_handler,
@@ -16,16 +15,20 @@ from handler.threat.incidents import (
 from middleware.system_user import AuthUser, require_user
 from router.common.responses import COMMON_ERROR_RESPONSES, CONFLICT_RESPONSE, FORBIDDEN_RESPONSE, not_found_response
 from schema.common.responses import CommonResponse
+from schema.agent.sessions import AgentSessionSummarySchema
 from schema.threat.incidents import (
-    CreateThreatIncidentSessionResponse,
-    ListThreatIncidentSessionsResponse,
     QueryThreatIncidentsResponse,
+    THREAT_INCIDENT_ACTION_TARGETS,
     ThreatIncidentSchema,
     ThreatIncidentStatus,
     TransitionThreatIncidentRequest,
     UpdateThreatIncidentRequest,
 )
-from schema.threat.workspace import ThreatIncidentWorkspaceSchema, ThreatTimelineResponse
+from schema.threat.workspace import (
+    ThreatIncidentWorkspaceSchema,
+    ThreatTimelineQuery,
+    ThreatTimelineResponse,
+)
 from service.threat.report_export import build_report_bundle
 from service.common.pagination import RESOURCE_PAGE_MAX_SIZE, RESOURCE_PAGE_SIZE
 
@@ -47,15 +50,11 @@ async def update_route(id: int, request: UpdateThreatIncidentRequest, user: Auth
 
 
 async def session_route(id: int, user: AuthUser = Depends(require_user)):
-    return await create_threat_incident_session_handler(id, user)
+    return await ensure_threat_incident_session_handler(id, user)
 
 
-async def sessions_route(id: int, page: int = Query(1, ge=1), size: int = Query(RESOURCE_PAGE_SIZE, ge=1, le=RESOURCE_PAGE_MAX_SIZE), user: AuthUser = Depends(require_user)):
-    return await list_threat_incident_sessions_handler(id, page, size, user)
-
-
-async def delete_session_route(id: int, session_id: str, user: AuthUser = Depends(require_user)):
-    return await delete_threat_incident_session_handler(id, session_id, user)
+async def get_session_route(id: int, user: AuthUser = Depends(require_user)):
+    return await get_threat_incident_session_handler(id, user)
 
 
 async def workspace_route(id: int, user: AuthUser = Depends(require_user)):
@@ -64,11 +63,10 @@ async def workspace_route(id: int, user: AuthUser = Depends(require_user)):
 
 async def timeline_route(
     id: int,
-    before: datetime | None = None,
-    limit: int = Query(100, ge=1, le=500),
+    query: Annotated[ThreatTimelineQuery, Query()],
     user: AuthUser = Depends(require_user),
 ):
-    return await get_threat_incident_timeline_handler(id, before=before, limit=limit, user=user)
+    return await get_threat_incident_timeline_handler(id, query=query, user=user)
 
 
 async def report_download_route(id: int, report_id: int, user: AuthUser = Depends(require_user)):
@@ -106,17 +104,10 @@ router.add_api_route(
         **errors,
     },
 )
-for action, status in (
-    ("start-investigation", ThreatIncidentStatus.INVESTIGATING),
-    ("start-engagement", ThreatIncidentStatus.ENGAGING),
-    ("finalize", ThreatIncidentStatus.FINALIZING),
-    ("close", ThreatIncidentStatus.CLOSED),
-    ("reopen", ThreatIncidentStatus.INVESTIGATING),
-):
+for action, status in THREAT_INCIDENT_ACTION_TARGETS.items():
     async def transition_route(id: int, request: TransitionThreatIncidentRequest, user: AuthUser = Depends(require_user), target=status):
         return await transition_threat_incident_handler(id, target, request, user)
-    transition_route.__name__ = f"{action.replace('-', '_')}_threat_incident"
-    router.add_api_route(f"/{{id}}/{action}", transition_route, methods=["POST"], response_model=CommonResponse[ThreatIncidentSchema], responses=errors)
-router.add_api_route("/{id}/sessions", session_route, methods=["POST"], response_model=CommonResponse[CreateThreatIncidentSessionResponse], responses=errors)
-router.add_api_route("/{id}/sessions", sessions_route, methods=["GET"], response_model=CommonResponse[ListThreatIncidentSessionsResponse], responses=errors)
-router.add_api_route("/{id}/sessions/{session_id}", delete_session_route, methods=["DELETE"], response_model=CommonResponse, responses=errors)
+    transition_route.__name__ = f"{action.value.replace('-', '_')}_threat_incident"
+    router.add_api_route(f"/{{id}}/{action.value}", transition_route, methods=["POST"], response_model=CommonResponse[ThreatIncidentSchema], responses=errors)
+router.add_api_route("/{id}/session", session_route, methods=["PUT"], response_model=CommonResponse[AgentSessionSummarySchema], responses=errors)
+router.add_api_route("/{id}/session", get_session_route, methods=["GET"], response_model=CommonResponse[AgentSessionSummarySchema], responses=errors)

@@ -4,7 +4,8 @@ from sqlalchemy import Column, Index, JSON, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 from schema.threat.incidents import ThreatConfidence, ThreatIncidentStatus, ThreatSeverity
-from utils.sqlalchemy import enum_value_type
+from utils.sqlalchemy import enum_value_type, utc_datetime_column
+from utils.time import utc_now
 
 
 class ThreatIncident(SQLModel, table=True):
@@ -32,12 +33,21 @@ class ThreatIncident(SQLModel, table=True):
     primary_fingerprint: str = Field(default="", index=True)
     source_ips: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
     summary: str = ""
-    first_observed_at: datetime = Field(default_factory=datetime.now, index=True)
-    last_observed_at: datetime = Field(default_factory=datetime.now, index=True)
-    idle_deadline: datetime | None = Field(default=None, index=True)
+    first_observed_at: datetime = Field(
+        default_factory=utc_now,
+        sa_column=utc_datetime_column(index=True),
+    )
+    last_observed_at: datetime = Field(
+        default_factory=utc_now,
+        sa_column=utc_datetime_column(index=True),
+    )
+    idle_deadline: datetime | None = Field(
+        default=None,
+        sa_column=utc_datetime_column(nullable=True, index=True),
+    )
     owner_id: int = Field(foreign_key="system_users.id", index=True, ondelete="RESTRICT")
-    created_at: datetime = Field(default_factory=datetime.now)
-    updated_at: datetime = Field(default_factory=datetime.now)
+    created_at: datetime = Field(default_factory=utc_now, sa_column=utc_datetime_column())
+    updated_at: datetime = Field(default_factory=utc_now, sa_column=utc_datetime_column())
 
 
 class ThreatIncidentEnvironment(SQLModel, table=True):
@@ -46,15 +56,15 @@ class ThreatIncidentEnvironment(SQLModel, table=True):
         UniqueConstraint("incident_id", "environment_id", name="uq_threat_incident_environment"),
     )
 
-    incident_id: int = Field(foreign_key="threat_incidents.id", primary_key=True, ondelete="CASCADE")
+    incident_id: int = Field(foreign_key="threat_incidents.id", primary_key=True, ondelete="RESTRICT")
     environment_id: int = Field(
         foreign_key="deception_environments.id",
         primary_key=True,
         index=True,
-        ondelete="CASCADE",
+        ondelete="RESTRICT",
     )
-    first_observed_at: datetime = Field(index=True)
-    last_observed_at: datetime = Field(index=True)
+    first_observed_at: datetime = Field(sa_column=utc_datetime_column(index=True))
+    last_observed_at: datetime = Field(sa_column=utc_datetime_column(index=True))
     correlation_method: str = Field(default="", max_length=64, index=True)
     correlation_key: str = Field(default="", max_length=512)
-    linked_at: datetime = Field(default_factory=datetime.now)
+    linked_at: datetime = Field(default_factory=utc_now, sa_column=utc_datetime_column())

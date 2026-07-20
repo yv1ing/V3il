@@ -39,6 +39,14 @@ A task has four essential parts:
 
 Tasks can depend on one another. Behavior reconstruction may precede an intent assessment; target-data confirmation may precede an environment change. V3il coordinates these dependencies and reviews specialist submissions.
 
+## Collaboration Continuity
+
+Each Incident has one canonical Agent Session shared by the Incident workspace, Agent Console, and operational views. This Session carries the investigation brief, operator decisions, specialist results, and the current collaboration state across every entry point.
+
+V3il maintains the primary investigation context and assigns bounded work to specialist Runs. A specialist receives the task scope, relevant evidence, and expected output. The primary Run pauses when it needs that result and continues after the assigned child Run completes. Delivery is tied to the exact parent-child relationship, which keeps concurrent specialist findings aligned with the correct investigation step.
+
+The operator can interrupt a currently executing Run or cancel all active work in the Session. Waiting work remains available for cancellation while its dependency is still outstanding. Completed findings, accepted context, and the durable event history remain available after either action, giving the next Run a clear and reviewable starting point.
+
 ## Evidence Standard
 
 Evidence connects source behavior, the investigation task, and the analytical statement. Useful evidence has:
@@ -51,6 +59,12 @@ Evidence connects source behavior, the investigation task, and the analytical st
 - a path for another operator to verify it.
 
 Behavior records include integrity context that can reveal missing, reordered, or replaced data. Evidence coverage and integrity contribute to task review and final-report checks.
+
+## Unified Timeline
+
+The Incident timeline combines behavior events, audit events, investigation tasks, evidence records, and deception revisions in one ordered view. Every item retains its source identity and time, allowing an operator to move from a decision to the evidence and environment state that informed it.
+
+Timeline pagination uses a stable position across item types. New activity can enter the head of the timeline while an operator continues reviewing older history. This provides a consistent view during active investigations and a reproducible sequence during post-incident review.
 
 ## Analytical Outputs
 
@@ -81,4 +95,4 @@ Before reporting, V3il checks that:
 - active environment changes and specialist work have finished;
 - the report references fixed analytical and evidence versions.
 
-After publication, V3il can create an evidence package and publish the report to LightRAG. Closed Incidents retain their timeline, evidence, analysis, report, and audit history for later review and retrieval.
+After publication, V3il can create an evidence package and publish the report to LightRAG. Report finalization records the fixed analysis and evidence scope before knowledge publication begins. The publication process can resume independently while the completed report remains available to operators. Closed Incidents retain their timeline, evidence, analysis, report, and audit history for later review and retrieval.

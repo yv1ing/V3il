@@ -5,8 +5,15 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from schema.agent.sessions import AgentSessionSummarySchema
+from schema.sandbox.containers import SandboxContainerProtocol
+
 from schema.common.responses import PaginatedResponse
-from schema.sandbox.containers import SandboxContainerEgressMode, SandboxContainerPortMapping
+from schema.sandbox.containers import (
+    SandboxContainerEgressMode,
+    SandboxContainerPortMapping,
+    SandboxContainerStatus,
+)
 
 
 MAX_DECEPTION_REFERENCE_URLS = 10
@@ -73,6 +80,98 @@ class DeceptionRevisionStepStatus(StrEnum):
     ROLLED_BACK = "rolled_back"
     FAILED = "failed"
     ROLLBACK_FAILED = "rollback_failed"
+
+
+DECEPTION_ENVIRONMENT_STATUS_TRANSITIONS: dict[
+    DeceptionEnvironmentStatus,
+    tuple[DeceptionEnvironmentStatus, ...],
+] = {
+    DeceptionEnvironmentStatus.DRAFT: (
+        DeceptionEnvironmentStatus.BUILDING,
+        DeceptionEnvironmentStatus.RETIRED,
+    ),
+    DeceptionEnvironmentStatus.BUILDING: (
+        DeceptionEnvironmentStatus.DRAFT,
+        DeceptionEnvironmentStatus.ACTIVE,
+        DeceptionEnvironmentStatus.RECOVERY_REQUIRED,
+    ),
+    DeceptionEnvironmentStatus.ACTIVE: (
+        DeceptionEnvironmentStatus.ADAPTING,
+        DeceptionEnvironmentStatus.PAUSED,
+        DeceptionEnvironmentStatus.RETIRED,
+    ),
+    DeceptionEnvironmentStatus.ADAPTING: (
+        DeceptionEnvironmentStatus.ACTIVE,
+        DeceptionEnvironmentStatus.RECOVERY_REQUIRED,
+    ),
+    DeceptionEnvironmentStatus.PAUSED: (
+        DeceptionEnvironmentStatus.ACTIVE,
+        DeceptionEnvironmentStatus.RETIRED,
+    ),
+    DeceptionEnvironmentStatus.RECOVERY_REQUIRED: (
+        DeceptionEnvironmentStatus.BUILDING,
+        DeceptionEnvironmentStatus.ADAPTING,
+    ),
+    DeceptionEnvironmentStatus.RETIRED: (),
+}
+
+
+DECEPTION_REVISION_STATUS_TRANSITIONS: dict[
+    DeceptionRevisionStatus,
+    tuple[DeceptionRevisionStatus, ...],
+] = {
+    DeceptionRevisionStatus.PENDING_APPROVAL: (
+        DeceptionRevisionStatus.PLANNED,
+        DeceptionRevisionStatus.REJECTED,
+    ),
+    DeceptionRevisionStatus.PLANNED: (DeceptionRevisionStatus.EXECUTING,),
+    DeceptionRevisionStatus.EXECUTING: (
+        DeceptionRevisionStatus.PLANNED,
+        DeceptionRevisionStatus.APPLIED,
+        DeceptionRevisionStatus.ROLLING_BACK,
+        DeceptionRevisionStatus.FAILED,
+        DeceptionRevisionStatus.RECOVERY_REQUIRED,
+    ),
+    DeceptionRevisionStatus.ROLLING_BACK: (
+        DeceptionRevisionStatus.ROLLED_BACK,
+        DeceptionRevisionStatus.RECOVERY_REQUIRED,
+    ),
+    DeceptionRevisionStatus.RECOVERY_REQUIRED: (DeceptionRevisionStatus.ROLLING_BACK,),
+    DeceptionRevisionStatus.APPLIED: (),
+    DeceptionRevisionStatus.ROLLED_BACK: (),
+    DeceptionRevisionStatus.FAILED: (),
+    DeceptionRevisionStatus.REJECTED: (),
+}
+
+
+DECEPTION_REVISION_STEP_STATUS_TRANSITIONS: dict[
+    DeceptionRevisionStepStatus,
+    tuple[DeceptionRevisionStepStatus, ...],
+] = {
+    DeceptionRevisionStepStatus.PENDING: (DeceptionRevisionStepStatus.APPLYING,),
+    DeceptionRevisionStepStatus.APPLYING: (
+        DeceptionRevisionStepStatus.APPLIED,
+        DeceptionRevisionStepStatus.FAILED,
+        DeceptionRevisionStepStatus.ROLLING_BACK,
+    ),
+    DeceptionRevisionStepStatus.APPLIED: (
+        DeceptionRevisionStepStatus.VERIFYING,
+        DeceptionRevisionStepStatus.ROLLING_BACK,
+    ),
+    DeceptionRevisionStepStatus.VERIFYING: (
+        DeceptionRevisionStepStatus.VERIFIED,
+        DeceptionRevisionStepStatus.FAILED,
+        DeceptionRevisionStepStatus.ROLLING_BACK,
+    ),
+    DeceptionRevisionStepStatus.VERIFIED: (DeceptionRevisionStepStatus.ROLLING_BACK,),
+    DeceptionRevisionStepStatus.FAILED: (DeceptionRevisionStepStatus.ROLLING_BACK,),
+    DeceptionRevisionStepStatus.ROLLING_BACK: (
+        DeceptionRevisionStepStatus.ROLLED_BACK,
+        DeceptionRevisionStepStatus.ROLLBACK_FAILED,
+    ),
+    DeceptionRevisionStepStatus.ROLLBACK_FAILED: (DeceptionRevisionStepStatus.ROLLING_BACK,),
+    DeceptionRevisionStepStatus.ROLLED_BACK: (),
+}
 
 
 class DeceptionRiskLevel(StrEnum):
@@ -154,7 +253,7 @@ class DeceptionContainerPortRequirement(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     container_port: int = Field(ge=1, le=65535)
-    protocol: str = Field(default="tcp", pattern="^(tcp|udp)$")
+    protocol: SandboxContainerProtocol = SandboxContainerProtocol.TCP
 
 
 class DeceptionContainerSpec(BaseModel):
@@ -227,6 +326,46 @@ class DeceptionRevisionStepPlan(BaseModel):
         return value.strip() if isinstance(value, str) else value
 
 
+class DeceptionContainerExecutionState(BaseModel):
+    container_id: int
+    status: SandboxContainerStatus
+    container_hash: str
+    status_generation: int
+    recorded_at: datetime
+
+
+class DeceptionRevisionPlanSnapshot(BaseModel):
+    rationale: str
+    target_persona: str
+    target_services: list[DeceptionServiceSpec]
+    container_spec: DeceptionContainerSpec
+    trigger_event_ids: list[int]
+    trigger_signal_ids: list[int]
+    engagement_goal: str
+    engagement_hypothesis: str
+    success_criteria: list[str]
+    observation_window_seconds: int
+    risk_level: DeceptionRiskLevel
+    approval_reason: str
+    steps: list[DeceptionRevisionStepPlan]
+
+
+class DeceptionRevisionBaselineSnapshot(BaseModel):
+    environment_status: DeceptionEnvironmentStatus
+    persona: str
+    services: list[DeceptionServiceSpec]
+    applied_revision_id: int | None
+    container: DeceptionContainerExecutionState | None
+    recorded_at: datetime
+
+
+class DeceptionRevisionExecutionCheckpoint(BaseModel):
+    phase: str
+    step_sequence: int | None
+    container: DeceptionContainerExecutionState | None
+    recorded_at: datetime
+
+
 class DeceptionRevisionStepSchema(DeceptionRevisionStepPlan):
     model_config = ConfigDict(from_attributes=True)
 
@@ -240,6 +379,10 @@ class DeceptionRevisionStepSchema(DeceptionRevisionStepPlan):
     verify_output: str
     rollback_exit_code: int | None = None
     rollback_output: str
+    before_state: DeceptionContainerExecutionState | None
+    after_apply_state: DeceptionContainerExecutionState | None
+    after_verify_state: DeceptionContainerExecutionState | None
+    after_rollback_state: DeceptionContainerExecutionState | None
     error: str
     started_at: datetime | None = None
     finished_at: datetime | None = None
@@ -282,6 +425,10 @@ class DeceptionRevisionSchema(BaseModel):
     target_persona: str
     target_services: list[DeceptionServiceSpec]
     container_spec: DeceptionContainerSpec
+    plan_snapshot: DeceptionRevisionPlanSnapshot
+    plan_sha256: str
+    baseline_snapshot: DeceptionRevisionBaselineSnapshot | None
+    execution_checkpoint: DeceptionRevisionExecutionCheckpoint | None
     execution_container_id: int | None
     trigger_event_ids: list[int]
     trigger_signal_ids: list[int]
@@ -433,7 +580,7 @@ class DeceptionRevisionDecisionRequest(BaseModel):
 
 class CreateDeceptionEnvironmentResponse(BaseModel):
     environment: DeceptionEnvironmentSchema
-    session_id: str
+    session: AgentSessionSummarySchema
     references: DeceptionReferenceBundleSchema
 
 

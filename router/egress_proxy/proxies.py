@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query
 
 from handler.egress_proxy.proxies import (
     create_egress_proxy_handler,
-    delete_egress_proxy_handler,
+    retire_egress_proxy_handler,
     query_egress_proxies_handler,
     test_egress_proxy_handler,
     update_egress_proxy_handler,
@@ -11,7 +11,7 @@ from middleware.system_user import require_admin
 from router.common.responses import BAD_REQUEST_RESPONSE, COMMON_ERROR_RESPONSES, not_found_response
 from schema.common.responses import CommonResponse
 from schema.egress_proxy.proxies import (
-    DeleteEgressProxyResponse,
+    RetireEgressProxyResponse,
     EgressProxySchema,
     QueryEgressProxiesResponse,
     TestEgressProxyResponse,
@@ -52,11 +52,11 @@ router.add_api_route(
 )
 
 router.add_api_route(
-    "/{id}",
-    delete_egress_proxy_handler,
-    methods=["DELETE"],
+    "/{id}/retire",
+    retire_egress_proxy_handler,
+    methods=["POST"],
     dependencies=ADMIN_ONLY,
-    response_model=CommonResponse[DeleteEgressProxyResponse],
+    response_model=CommonResponse[RetireEgressProxyResponse],
     responses={**COMMON_ERROR_RESPONSES, **BAD_REQUEST_RESPONSE, **NOT_FOUND_RESPONSE},
 )
 

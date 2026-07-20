@@ -2,7 +2,6 @@ import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import datetime
 
 from sqlmodel import select
 
@@ -13,7 +12,10 @@ from model.host.hosts import ManagedHost
 from model.sandbox.containers import SandboxContainer
 from schema.sandbox.containers import SandboxContainerStatus
 from schema.system_user.users import SystemUserRole
-from service.agent.sandbox_selection import refresh_session_sandbox_container_generation
+from service.agent.sandbox_selection import (
+    clear_session_sandbox_container_bindings,
+    refresh_session_sandbox_container_generation,
+)
 from service.host.state import ManagedHostConnection, snapshot_managed_host
 from service.sandbox.docker_ops import (
     DockerContainerState,
@@ -31,6 +33,7 @@ from service.threat.control_plane import (
     ContainerRuntimeEvidence,
     record_container_runtime_state,
 )
+from utils.time import utc_now
 
 
 logger = get_logger(__name__)
@@ -79,18 +82,32 @@ async def save_sandbox_container_status(
     status: SandboxContainerStatus,
 ) -> SandboxContainerRecord | None:
     async with get_async_session() as session:
-        sandbox_container = await session.get(SandboxContainer, id)
+        sandbox_container = (await session.exec(
+            select(SandboxContainer).where(SandboxContainer.id == id).with_for_update()
+        )).one_or_none()
         if sandbox_container is None:
             return None
 
+        previous_status = sandbox_container.status
+        if (
+            status == SandboxContainerStatus.RUNNING
+            and previous_status not in {SandboxContainerStatus.RUNNING, SandboxContainerStatus.PAUSED}
+        ):
+            sandbox_container.generation += 1
         sandbox_container.status = status
-        sandbox_container.updated_at = datetime.now()
+        sandbox_container.updated_at = utc_now()
         session.add(sandbox_container)
-        await refresh_session_sandbox_container_generation(
-            session,
-            sandbox_container_id=id,
-            sandbox_container_generation=status_generation(sandbox_container),
-        )
+        if status == SandboxContainerStatus.RUNNING:
+            await refresh_session_sandbox_container_generation(
+                session,
+                sandbox_container_id=id,
+                sandbox_container_generation=status_generation(sandbox_container),
+            )
+        else:
+            await clear_session_sandbox_container_bindings(
+                session,
+                sandbox_container_id=id,
+            )
         await session.commit()
 
     _schedule_agent_tool_invalidation(id)
@@ -98,7 +115,7 @@ async def save_sandbox_container_status(
 
 
 def status_generation(sandbox_container: SandboxContainer) -> int:
-    return int(sandbox_container.updated_at.timestamp() * 1_000_000)
+    return sandbox_container.generation
 
 
 def _clear_tool_binding_state_cache(container_id: int | None = None) -> None:
@@ -413,24 +430,11 @@ async def resolve_sandbox_container_selection(
 ) -> SandboxContainerSelection | None:
     async with get_async_session() as session:
         sandbox_container = await session.get(SandboxContainer, id)
-        if sandbox_container is None:
+        if sandbox_container is None or sandbox_container.status != SandboxContainerStatus.RUNNING:
             return None
         if user_role != SystemUserRole.ADMIN and sandbox_container.owner_id != user_id:
             return None
         if await _sandbox_container_has_deception_binding(session, id):
-            return None
-        return SandboxContainerSelection(
-            id=id,
-            generation=status_generation(sandbox_container),
-        )
-
-
-async def resolve_bound_sandbox_container_selection(
-    id: int,
-) -> SandboxContainerSelection | None:
-    async with get_async_session() as session:
-        sandbox_container = await session.get(SandboxContainer, id)
-        if sandbox_container is None:
             return None
         return SandboxContainerSelection(
             id=id,

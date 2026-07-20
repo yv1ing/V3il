@@ -37,6 +37,12 @@ def output_path_for_run(run_id: str) -> str:
     return f"{OUTPUT_DIR}/{run_id}.log"
 
 
+def execution_marker_for_run(run_id: str) -> str:
+    if not re.fullmatch(r"[0-9a-f]{32}", run_id, re.IGNORECASE):
+        raise ValueError("invalid sandbox command run id")
+    return f"/tmp/sandbox-command-{run_id.lower()}.pid"
+
+
 def result_metadata(
     *,
     status: SandboxAsyncJobStatus,

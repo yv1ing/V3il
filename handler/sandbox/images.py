@@ -4,13 +4,12 @@ from handler.common.http import raise_api_error
 from schema.common.responses import CommonResponse
 from schema.sandbox.images import (
     CreateSandboxImageRequest,
-    DeleteSandboxImageResponse,
+    RetireSandboxImageResponse,
     QuerySandboxImagesResponse,
     SandboxImageSchema,
 )
 from service.sandbox.images import (
     create_sandbox_image,
-    delete_sandbox_image,
     query_sandbox_images,
 )
 from service.common.pagination import paginated_payload
@@ -28,13 +27,13 @@ async def create_sandbox_image_handler(request: CreateSandboxImageRequest) -> Co
     )
 
 
-async def delete_sandbox_image_handler(id: int) -> CommonResponse:
-    result = await delete_sandbox_image(id)
+async def retire_sandbox_image_handler(id: int) -> CommonResponse:
+    result = await retire_sandbox_image(id)
     if result.not_found:
         raise_api_error(HTTPStatus.NOT_FOUND, "sandbox image not found")
-    if not result.deleted:
+    if not result.retired:
         raise_api_error(HTTPStatus.BAD_REQUEST, result.message)
-    return CommonResponse(data=DeleteSandboxImageResponse(id=id))
+    return CommonResponse(data=RetireSandboxImageResponse(id=id))
 
 
 async def query_sandbox_images_handler(page: int, size: int, keyword: str) -> CommonResponse:
@@ -45,3 +44,4 @@ async def query_sandbox_images_handler(page: int, size: int, keyword: str) -> Co
             sandbox_images.items,
         ),
     ))
+    retire_sandbox_image,

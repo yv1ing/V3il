@@ -52,9 +52,7 @@ def behavior_event_hash(
 
 def sensor_event_hash(event: CapturedBehaviorEvent, control_token: str) -> str:
     payload = event.model_dump(mode="json", exclude={"sensor_event_hash"})
-    observed_at = event.observed_at
-    if observed_at.tzinfo is not None:
-        observed_at = observed_at.astimezone(timezone.utc).replace(tzinfo=None)
+    observed_at = event.observed_at.astimezone(timezone.utc)
     payload["observed_at"] = observed_at.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     for field_name in _OPTIONAL_SENSOR_STRING_FIELDS:
         if not payload.get(field_name):

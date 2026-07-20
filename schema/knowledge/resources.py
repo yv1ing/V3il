@@ -1,8 +1,6 @@
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
-
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, JsonValue
 
 from schema.common.responses import PaginatedResponse
 
@@ -22,6 +20,30 @@ KNOWLEDGE_DOCUMENT_INFLIGHT_STATUSES = (
     KnowledgeDocumentStatus.ANALYZING,
     KnowledgeDocumentStatus.PROCESSING,
 )
+
+KNOWLEDGE_DOCUMENT_STATUS_TRANSITIONS: dict[
+    KnowledgeDocumentStatus,
+    tuple[KnowledgeDocumentStatus, ...],
+] = {
+    KnowledgeDocumentStatus.PENDING: (
+        KnowledgeDocumentStatus.PARSING,
+        KnowledgeDocumentStatus.FAILED,
+    ),
+    KnowledgeDocumentStatus.PARSING: (
+        KnowledgeDocumentStatus.ANALYZING,
+        KnowledgeDocumentStatus.FAILED,
+    ),
+    KnowledgeDocumentStatus.ANALYZING: (
+        KnowledgeDocumentStatus.PROCESSING,
+        KnowledgeDocumentStatus.FAILED,
+    ),
+    KnowledgeDocumentStatus.PROCESSING: (
+        KnowledgeDocumentStatus.PROCESSED,
+        KnowledgeDocumentStatus.FAILED,
+    ),
+    KnowledgeDocumentStatus.PROCESSED: (),
+    KnowledgeDocumentStatus.FAILED: (),
+}
 
 
 class KnowledgeDocumentStatusCounts(BaseModel):
@@ -54,12 +76,12 @@ class QueryKnowledgeDocumentsResponse(PaginatedResponse[KnowledgeDocumentSchema]
 class KnowledgeDocumentDetailSchema(KnowledgeDocumentSchema):
     content: str
     chunk_ids: list[str]
-    metadata: dict[str, Any]
+    metadata: dict[str, JsonValue]
     content_hash: str | None = None
     parse_format: str | None = None
     parse_engine: str | None = None
     process_options: str | None = None
-    chunk_options: dict[str, Any]
+    chunk_options: dict[str, JsonValue]
 
 
 class RejectedKnowledgeDocumentUpload(BaseModel):
@@ -94,14 +116,14 @@ class QueryKnowledgeVectorsResponse(PaginatedResponse[KnowledgeVectorSchema]):
 
 
 class KnowledgeVectorDetailSchema(KnowledgeVectorSchema):
-    heading: dict[str, Any]
-    source_metadata: dict[str, Any]
+    heading: dict[str, JsonValue]
+    source_metadata: dict[str, JsonValue]
 
 
 class KnowledgeGraphNodeSchema(BaseModel):
     id: str
     labels: list[str]
-    properties: dict[str, Any]
+    properties: dict[str, JsonValue]
     matched: bool = False
 
 
@@ -110,7 +132,7 @@ class KnowledgeGraphEdgeSchema(BaseModel):
     type: str
     source: str
     target: str
-    properties: dict[str, Any]
+    properties: dict[str, JsonValue]
 
 
 class KnowledgeGraphSchema(BaseModel):

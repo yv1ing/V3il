@@ -1,7 +1,7 @@
 from typing import Generic, TypeVar
 
 from fastapi import status as http_status
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 T = TypeVar("T")
@@ -17,7 +17,7 @@ class CommonResponse(BaseModel, Generic[T]):
 
 
 class PaginatedResponse(BaseModel, Generic[T]):
-    page: int
-    size: int
-    total: int
+    page: int = Field(ge=1)
+    size: int = Field(ge=1)
+    total: int = Field(ge=0)
     items: list[T]

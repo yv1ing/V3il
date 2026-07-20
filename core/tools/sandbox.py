@@ -11,6 +11,7 @@ from core.sandbox import command_output
 from core.sandbox.command_jobs import cancel_async_sandbox_command, start_async_sandbox_command
 from core.sandbox.command_output import COMMAND_TIMEOUT_ERROR
 from schema.sandbox.async_jobs import SandboxAsyncJobStatus
+from schema.agent.types import AgentRunWaitReason
 from schema.common.tool_results import ToolResultSchema, ToolResultStatusSchema, ToolResultTypeSchema
 from service.sandbox import async_jobs as sandbox_async_jobs
 from service.sandbox.commands import SandboxContainerCommandTimeoutError, execute_sandbox_container_command
@@ -24,7 +25,6 @@ _SKILL_RESOURCE_FILES_TRUNCATED_MARKER = "__V3IL_SKILL_RESOURCE_FILES_TRUNCATED_
 _MAX_SKILL_RESOURCE_FILES = 200
 _SYNC_COMMAND_TIMEOUT_SECONDS = 30
 _ASYNC_COMMAND_TIMEOUT_SECONDS = 300
-_ASYNC_COMMAND_CONCURRENCY_LIMIT = 3
 
 
 def _command_result(
@@ -92,6 +92,7 @@ async def execute_sync_command(
             id=container_id,
             command=command_output.capture_command(command, output_path),
             timeout_seconds=timeout,
+            expected_generation=ctx.context.sandbox_container_generation,
         )
     except asyncio.CancelledError:
         raise
@@ -139,36 +140,31 @@ async def execute_async_command(
     if not ctx.context.agent_instance_id:
         return _error_result("agent instance id is required for async command execution")
 
-    running_jobs = await sandbox_async_jobs.count_running_async_jobs_for_agent(
-        session_id=ctx.context.session_id,
-        agent_instance_id=ctx.context.agent_instance_id,
-    )
-    if running_jobs >= _ASYNC_COMMAND_CONCURRENCY_LIMIT:
-        return _error_result(
-            f"sandbox async command limit reached; at most {_ASYNC_COMMAND_CONCURRENCY_LIMIT} commands may run concurrently",
-        )
-
     timeout = _clamp_timeout(timeout_seconds, _ASYNC_COMMAND_TIMEOUT_SECONDS)
     run_id = command_output.new_run_id()
     output_path = command_output.output_path_for_run(run_id)
     command_text = command.strip()
 
-    await start_async_sandbox_command(
-        run_id=run_id,
-        context=replace(
-            ctx.context,
-            rag_context="",
-            investigation_context="",
-            deception_context="",
-        ),
-        command=command_text,
-        output_file=output_path,
-        wrapped_command=command_output.async_command(command_text, output_path),
-        stat_command=command_output.stat_command(output_path),
-        timeout_seconds=timeout,
-    )
+    try:
+        await start_async_sandbox_command(
+            run_id=run_id,
+            context=replace(
+                ctx.context,
+                rag_context="",
+                investigation_context="",
+                deception_context="",
+            ),
+            command=command_text,
+            output_file=output_path,
+            timeout_seconds=timeout,
+        )
+    except ValueError as exc:
+        return _error_result(str(exc))
+    ctx.context.wait_requested = True
+    ctx.context.wait_reason = AgentRunWaitReason.SANDBOX_COMMAND
+    ctx.context.wait_reference_id = ctx.context.attempt_id
     return _command_result(
-        status=SandboxAsyncJobStatus.RUNNING,
+        status=SandboxAsyncJobStatus.QUEUED,
         run_id=run_id,
     )
 
@@ -199,6 +195,7 @@ async def read_sandbox_command_output(
             id=container_id,
             command=read_cmd,
             timeout_seconds=_SYNC_COMMAND_TIMEOUT_SECONDS,
+            expected_generation=ctx.context.sandbox_container_generation,
         )
     except asyncio.CancelledError:
         raise
@@ -230,7 +227,7 @@ async def cancel_sandbox_async_job(ctx: RunContextWrapper[AgentRuntimeContext], 
         JSON metadata for the latest known async command state after cancellation is requested.
     """
     snapshot = await sandbox_async_jobs.get_async_job(run_id.strip(), session_id=ctx.context.session_id)
-    if snapshot is None or snapshot.agent_instance_id != ctx.context.agent_instance_id:
+    if snapshot is None or snapshot.waiting_run_id != ctx.context.run_id:
         return _error_result("sandbox async job not found")
     await cancel_async_sandbox_command(snapshot.run_id)
     latest = await sandbox_async_jobs.get_async_job(snapshot.run_id, session_id=ctx.context.session_id)
@@ -343,6 +340,7 @@ async def load_skill(ctx: RunContextWrapper[AgentRuntimeContext], name: str) -> 
             id=container_id,
             command=_load_skill_command(skill_name),
             timeout_seconds=_SYNC_COMMAND_TIMEOUT_SECONDS,
+            expected_generation=ctx.context.sandbox_container_generation,
         )
     except asyncio.CancelledError:
         raise

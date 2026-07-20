@@ -31,7 +31,7 @@ from schema.sandbox.containers import (
     ContainerFileType,
     ContainerFileWriteRequest,
     CreateSandboxContainerRequest,
-    DeleteSandboxContainerResponse,
+    RemoveSandboxContainerResponse,
     ListContainerFilesResponse,
     QuerySandboxContainerHostOptionsResponse,
     QuerySandboxContainerImageOptionsResponse,
@@ -58,7 +58,6 @@ from service.sandbox.files import (
 from service.sandbox.lifecycle import (
     SandboxContainerInUseError,
     create_sandbox_container,
-    delete_sandbox_container,
     pause_sandbox_container,
     resume_sandbox_container,
     start_sandbox_container,
@@ -152,15 +151,15 @@ async def update_sandbox_container_egress_handler(
     ), user)
 
 
-async def delete_sandbox_container_handler(id: int, user: AuthUser) -> CommonResponse:
+async def remove_sandbox_container_handler(id: int, user: AuthUser) -> CommonResponse:
     await _require_manage_permission(id, user)
     try:
-        deleted = await delete_sandbox_container(id)
+        removed = await remove_sandbox_container(id)
     except SandboxContainerInUseError as exc:
         raise_api_error(HTTPStatus.CONFLICT, str(exc))
-    if not deleted:
+    if not removed:
         raise_api_error(HTTPStatus.NOT_FOUND, "sandbox container not found")
-    return CommonResponse(data=DeleteSandboxContainerResponse(id=id))
+    return CommonResponse(data=RemoveSandboxContainerResponse(id=id))
 
 
 async def query_sandbox_containers_handler(
@@ -535,4 +534,4 @@ def _raise_container_file_operation_error(error: Exception, container_id: int, o
         raise_api_error(HTTPStatus.BAD_GATEWAY, f"failed to {operation}")
     logger.exception("failed to %s: %s", operation, container_id)
     raise_api_error(HTTPStatus.INTERNAL_SERVER_ERROR, f"failed to {operation}")
-
+    remove_sandbox_container,

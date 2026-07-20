@@ -6,7 +6,7 @@ import { listAgents } from "../../shared/api/agents";
 import { queryDeceptionEnvironments } from "../../shared/api/deceptionEnvironments";
 import { showApiError } from "../../shared/api/feedback";
 import { collectAllPages } from "../../shared/api/pagination";
-import { DECEPTION_ENVIRONMENT_STATUS, THREAT_INCIDENT_STATUS, THREAT_SEVERITY } from "../../shared/api/generated/constants";
+import { DECEPTION_ENVIRONMENT_STATUS, PAGINATION_MAXIMUM_PAGE_SIZE, THREAT_INCIDENT_STATUS, THREAT_SEVERITY } from "../../shared/api/generated/constants";
 import { queryThreatIncidents } from "../../shared/api/threatIncidents";
 import type { AgentInfo, DeceptionEnvironment, ThreatIncident } from "../../shared/api/types";
 import { AsyncContent } from "../../shared/components/AsyncContent";
@@ -40,8 +40,8 @@ export function CommandCenterPage() {
     setLoading(true);
     try {
       const [incidentResponse, environmentResponse, agentResponse] = await Promise.all([
-        collectAllPages<ThreatIncident>((page) => queryThreatIncidents({ page, size: 100, keyword: "" })),
-        collectAllPages<DeceptionEnvironment>((page) => queryDeceptionEnvironments({ page, size: 100, keyword: "" })),
+        collectAllPages<ThreatIncident>((page) => queryThreatIncidents({ page, size: PAGINATION_MAXIMUM_PAGE_SIZE, keyword: "" })),
+        collectAllPages<DeceptionEnvironment>((page) => queryDeceptionEnvironments({ page, size: PAGINATION_MAXIMUM_PAGE_SIZE, keyword: "" })),
         listAgents(),
       ]);
       setData({
@@ -49,7 +49,7 @@ export function CommandCenterPage() {
         incidentTotal: incidentResponse.length,
         environments: environmentResponse,
         environmentTotal: environmentResponse.length,
-        agents: agentResponse.data?.items ?? [],
+        agents: agentResponse.items,
       });
     } catch (error) {
       showApiError(error);

@@ -2,7 +2,7 @@ import { Input, Select } from "@douyinfe/semi-ui";
 import { KeyRound, Mail, Shield, User, UserRound } from "lucide-react";
 import { useEffect, useState } from "react";
 import { getSystemUserRoles, isSystemUserRole } from "../../shared/api/contract";
-import { SYSTEM_USER_ROLE } from "../../shared/api/generated/constants";
+import { FIELD_CONSTRAINTS, SYSTEM_USER_ROLE } from "../../shared/api/generated/constants";
 import type { CreateSystemUserRequest, SystemUser, SystemUserRole, UpdateSystemUserRequest } from "../../shared/api/types";
 import { FormField } from "../../shared/components/FormField";
 import { ResourceModal } from "../../shared/components/ResourceModal";
@@ -26,6 +26,7 @@ type UserFormModalProps = {
 
 const EMPTY: UserFormValues = { username: "", email: "", password: "", role: SYSTEM_USER_ROLE.USER };
 const ROLES = getSystemUserRoles();
+const USER_CONSTRAINTS = FIELD_CONSTRAINTS.CreateSystemUserRequest;
 
 function initial(user: SystemUser | null): UserFormValues {
   if (!user) return EMPTY;
@@ -57,12 +58,12 @@ export function UserFormModal({ open, user, saving, onCancel, onCreate, onUpdate
       onSubmit={submit}
     >
       <FormField label="Username">
-        <Input prefix={<User size={16} />} value={values.username} maxLength={64} required
+        <Input prefix={<User size={16} />} value={values.username} maxLength={USER_CONSTRAINTS.username.maxLength} required
           onChange={(username) => setValues((v) => ({ ...v, username }))}
         />
       </FormField>
       <FormField label="Email">
-        <Input type="email" prefix={<Mail size={16} />} value={values.email} maxLength={255}
+        <Input type="email" prefix={<Mail size={16} />} value={values.email} maxLength={USER_CONSTRAINTS.email.maxLength}
           onChange={(email) => setValues((v) => ({ ...v, email }))}
         />
       </FormField>
@@ -73,7 +74,7 @@ export function UserFormModal({ open, user, saving, onCancel, onCreate, onUpdate
         />
       </FormField>
       <FormField label="Password">
-        <Input mode="password" prefix={<KeyRound size={16} />} value={values.password} maxLength={128}
+        <Input mode="password" prefix={<KeyRound size={16} />} value={values.password} maxLength={USER_CONSTRAINTS.password.maxLength}
           required
           placeholder="Password"
           onChange={(password) => setValues((v) => ({ ...v, password }))}

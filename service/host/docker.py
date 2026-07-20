@@ -162,11 +162,11 @@ def _image_schema(attrs: dict) -> ManagedHostImageSchema:
 def _parse_docker_datetime(value: object) -> datetime | None:
     if not isinstance(value, str) or not value:
         return None
-    normalized = value.rstrip("Z")
+    normalized = value.removesuffix("Z") + ("+00:00" if value.endswith("Z") else "")
     try:
         parsed = datetime.fromisoformat(normalized)
     except ValueError:
         return None
-    if parsed.tzinfo is not None:
-        return parsed.astimezone(timezone.utc).replace(tzinfo=None)
-    return parsed
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)

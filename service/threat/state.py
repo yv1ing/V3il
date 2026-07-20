@@ -1,20 +1,25 @@
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from sqlalchemy import func
 from sqlmodel import select
 
+from utils.time import utc_now
+
 from config import get_config
-from core.runtime.coordination import cancel_incident_agent_sessions
 from database import get_async_session
-from model.agent.sessions import AgentSessionMeta
-from model.agent.subordinates import AgentSubordinateTask
+from model.agent.sessions import AgentRun, AgentSession
 from model.deception.environments import DeceptionRevision
 from model.threat.analysis import AnalysisRecord, RiskAssessment
 from model.threat.behaviors import ThreatIncidentBehaviorEvent
 from model.threat.incidents import ThreatIncident, ThreatIncidentEnvironment
 from model.threat.intelligence import IntelligenceReport
-from model.threat.investigations import InvestigationTask, InvestigationTaskEvent
-from schema.agent.subordinates import AgentSubordinateStatus
+from model.threat.investigations import (
+    EvidenceBehaviorLink,
+    InvestigationEvidence,
+    InvestigationTask,
+    InvestigationTaskEvent,
+)
+from schema.agent.sessions import AgentRunStatus
 from schema.deception.environments import DeceptionRevisionStatus
 from schema.system_user.users import SystemUserRole
 from schema.threat.analysis import AnalysisKind
@@ -31,6 +36,7 @@ from schema.threat.intelligence import (
 )
 from schema.threat.investigations import AuditActorType, AuditEventKind, InvestigationTaskStatus
 from service.threat.audit import add_audit_event
+from service.agent.repository import request_session_cancellation
 from service.threat.intelligence import build_intelligence_report_evidence_manifest
 from service.threat.report_readiness import final_report_analysis_error
 from service.threat.types import ThreatIncidentMutationResult
@@ -47,7 +53,7 @@ async def update_threat_incident(id: int, request: UpdateThreatIncidentRequest, 
             return ThreatIncidentMutationResult(incident=None, conflict=True, message="closed threat incidents are immutable")
         for field, value in request.model_dump(exclude_unset=True).items():
             setattr(incident, field, value)
-        incident.updated_at = datetime.now()
+        incident.updated_at = utc_now()
         session.add(incident)
         await add_audit_event(
             session,
@@ -97,7 +103,7 @@ async def transition_threat_incident(
             closed = True
         previous = incident.status
         incident.status = next_status
-        now = datetime.now()
+        now = utc_now()
         incident.updated_at = now
         if next_status in {
             ThreatIncidentStatus.OPEN,
@@ -127,8 +133,11 @@ async def transition_threat_incident(
         schema = ThreatIncidentSchema.model_validate(incident)
     if closed:
         async with get_async_session() as session:
-            session_ids = list((await session.exec(select(AgentSessionMeta.session_id).where(AgentSessionMeta.incident_id == id))).all())
-        await cancel_incident_agent_sessions([item for item in session_ids if item != preserve_session_id], "Threat incident was closed.")
+            session_ids = list((await session.exec(select(AgentSession.id).where(AgentSession.incident_id == id))).all())
+        await request_session_cancellation(
+            [item for item in session_ids if item != preserve_session_id],
+            reason="Threat incident was closed.",
+        )
     return ThreatIncidentMutationResult(incident=schema)
 
 
@@ -150,12 +159,13 @@ async def _finalizing_error(session, incident_id: int):
     if running_revisions:
         return "incident cannot finalize while a deception revision is running or requires recovery"
     active_specialists = int((await session.exec(
-        select(func.count()).select_from(AgentSubordinateTask).join(
+        select(func.count()).select_from(AgentRun).join(
             InvestigationTask,
-            InvestigationTask.id == AgentSubordinateTask.investigation_task_id,
+            InvestigationTask.id == AgentRun.investigation_task_id,
         ).where(
             InvestigationTask.incident_id == incident_id,
-            AgentSubordinateTask.status == AgentSubordinateStatus.RUNNING,
+            AgentRun.parent_run_id.is_not(None),
+            AgentRun.status.in_([AgentRunStatus.QUEUED, AgentRunStatus.RUNNING, AgentRunStatus.WAITING]),
         )
     )).one())
     if active_specialists:
@@ -200,13 +210,24 @@ async def _closure_error(session, incident_id: int):
     ))).one())
     if open_tasks:
         return f"incident has {open_tasks} unresolved task(s)"
+    covered_event_ids = (
+        select(EvidenceBehaviorLink.event_id)
+        .join(
+            InvestigationEvidence,
+            InvestigationEvidence.id == EvidenceBehaviorLink.evidence_id,
+        )
+        .where(InvestigationEvidence.task_id == InvestigationTaskEvent.task_id)
+    )
     uncovered = int((await session.exec(
         select(func.count()).select_from(InvestigationTaskEvent)
         .join(InvestigationTask, InvestigationTask.id == InvestigationTaskEvent.task_id)
-        .where(InvestigationTask.incident_id == incident_id, InvestigationTaskEvent.evidence_id.is_(None))
+        .where(
+            InvestigationTask.incident_id == incident_id,
+            InvestigationTaskEvent.event_id.notin_(covered_event_ids),
+        )
     )).one())
     if uncovered:
-        return f"incident has {uncovered} task event(s) without primary evidence"
+        return f"incident has {uncovered} task event(s) without evidence"
     if error := await final_report_analysis_error(session, incident_id):
         return error
     report = (await session.exec(select(IntelligenceReport).where(

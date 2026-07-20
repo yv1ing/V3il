@@ -1,13 +1,13 @@
 import { Tag, Toast, Tooltip } from "@douyinfe/semi-ui";
 import { Network, Pencil, Server, Wifi } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
-import { createEgressProxy, deleteEgressProxy, queryEgressProxies, testEgressProxy, updateEgressProxy } from "../../shared/api/egressProxies";
+import { createEgressProxy, queryEgressProxies, retireEgressProxy, testEgressProxy, updateEgressProxy } from "../../shared/api/egressProxies";
 import { showApiError } from "../../shared/api/feedback";
 import { EGRESS_PROXY_TYPE, EGRESS_PROXY_TYPE_VALUES } from "../../shared/api/generated/constants";
 import type { CreateEgressProxyRequest, EgressProxy, UpdateEgressProxyRequest } from "../../shared/api/types";
 import { PagedResourceTable } from "../../shared/components/PagedResourceTable";
 import type { ResourceColumn } from "../../shared/components/ResourceTable";
-import { DeleteRowAction, OwnerCell, ResourceIdentity, ResourceSecretText, RowActionButton, RowActions } from "../../shared/components/ResourceCells";
+import { OwnerCell, ResourceIdentity, ResourceSecretText, RetireRowAction, RowActionButton, RowActions } from "../../shared/components/ResourceCells";
 import { useAdminResourceHeader } from "../../shared/hooks/useAdminResourceHeader";
 import { usePagedResourceList } from "../../shared/hooks/usePagedResourceList";
 import { useResourceAction } from "../../shared/hooks/useResourceAction";
@@ -24,8 +24,8 @@ export function EgressProxiesPage() {
   const [testingId, setTestingId] = useState<number | null>(null);
   const testingRef = useRef(false);
 
-  const { run: deleteProxy, busyId: deletingId } = useResourceAction<EgressProxy>(
-    (proxy) => deleteEgressProxy(proxy.id), proxies.loadItems,
+  const { run: retireProxy, busyId: retiringId } = useResourceAction<EgressProxy>(
+    (proxy) => retireEgressProxy(proxy.id), proxies.loadItems,
   );
 
   useAdminResourceHeader({
@@ -101,8 +101,8 @@ export function EgressProxiesPage() {
           <RowActionButton icon={<Pencil size={15} />} label={`Edit ${proxy.proxy_host}`}
             onClick={() => setModal({ mode: "edit", proxy })}
           />
-          <DeleteRowAction title="Delete egress proxy" content={`Delete ${proxy.proxy_host}:${proxy.proxy_port}?`} label={`Delete ${proxy.proxy_host}`}
-            loading={deletingId === proxy.id} onConfirm={() => void deleteProxy(proxy)}
+          <RetireRowAction title="Retire egress proxy" content={`Retire ${proxy.proxy_host}:${proxy.proxy_port}?`} label={`Retire ${proxy.proxy_host}`}
+            loading={retiringId === proxy.id} onConfirm={() => void retireProxy(proxy)}
           />
         </RowActions>
       ),

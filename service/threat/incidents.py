@@ -6,14 +6,15 @@ from sqlmodel import select
 
 from core.agent.constants import DEFAULT_AGENT_CODE
 from database import get_async_session
-from model.agent.sessions import AgentSessionMeta
+from model.agent.sessions import AgentSession
 from model.deception.environments import DeceptionEnvironment
 from model.sandbox.containers import SandboxContainer
 from model.threat.incidents import ThreatIncident, ThreatIncidentEnvironment
 from schema.agent.sessions import SessionType
 from schema.system_user.users import SystemUserRole
 from schema.threat.incidents import ThreatIncidentSchema, ThreatIncidentStatus
-from service.agent.sessions import delete_session, ensure_sdk_session_row, list_sessions
+from service.agent.repository import session_summary
+from service.agent.scoped_sessions import ensure_scoped_session
 from service.common.pagination import Page, RESOURCE_PAGE_SIZE, page_offset
 from service.sandbox.status import status_generation
 
@@ -65,31 +66,33 @@ async def query_threat_incidents_for_user(*, page=1, size=RESOURCE_PAGE_SIZE, ke
     return Page(page=page, size=size, total=total, items=items)
 
 
-async def create_threat_incident_session(incident_id: int, *, user_id: int, user_role: SystemUserRole):
+async def ensure_threat_incident_session(incident_id: int, *, user_id: int, user_role: SystemUserRole):
     async with get_async_session() as session, session.begin():
         incident = (await session.exec(select(ThreatIncident).where(ThreatIncident.id == incident_id).with_for_update())).one_or_none()
         if incident is None:
             return ThreatIncidentSessionResult(not_found=True)
         if not _can_access_incident(incident, user_id, user_role):
             return ThreatIncidentSessionResult(forbidden=True)
+        existing = (await session.exec(select(AgentSession.id).where(
+            AgentSession.incident_id == incident_id,
+        ))).one_or_none()
+        if existing is not None:
+            return ThreatIncidentSessionResult(session_id=existing)
         if incident.status == ThreatIncidentStatus.CLOSED:
-            return ThreatIncidentSessionResult(conflict=True, message="closed threat incidents cannot create investigation sessions")
+            return ThreatIncidentSessionResult(conflict=True, message="closed threat incidents cannot create an investigation session")
         container = await _incident_container(session, incident_id)
         if container is None:
             return ThreatIncidentSessionResult(conflict=True, message="incident has no available deception container")
-        session_id = str(uuid4())
-        await ensure_sdk_session_row(session, session_id)
-        session.add(AgentSessionMeta(
-            session_id=session_id,
+        scoped = await ensure_scoped_session(
+            session,
             session_type=SessionType.INCIDENT,
             title=incident.title,
-            agent_code=DEFAULT_AGENT_CODE,
             owner_id=user_id,
             incident_id=incident_id,
-            selected_sandbox_container_id=container.id,
-            selected_sandbox_container_generation=status_generation(container),
-        ))
-    return ThreatIncidentSessionResult(session_id=session_id)
+            sandbox_container_id=container.id,
+            sandbox_generation=status_generation(container),
+        )
+    return ThreatIncidentSessionResult(session_id=scoped.id)
 
 
 async def ensure_automated_threat_incident_session_in_session(session, incident):
@@ -97,30 +100,24 @@ async def ensure_automated_threat_incident_session_in_session(session, incident)
         return ThreatIncidentSessionResult(conflict=True, message="threat incident is not persisted")
     if incident.status == ThreatIncidentStatus.CLOSED:
         return ThreatIncidentSessionResult(conflict=True, message="closed threat incidents cannot run autonomous investigation")
-    existing = (await session.exec(select(AgentSessionMeta.session_id).where(
-        AgentSessionMeta.incident_id == incident.id,
-        AgentSessionMeta.is_automated.is_(True),
+    existing = (await session.exec(select(AgentSession.id).where(
+        AgentSession.incident_id == incident.id,
     ).limit(1))).first()
     if existing is not None:
         return ThreatIncidentSessionResult(session_id=existing)
     container = await _incident_container(session, incident.id)
     if container is None:
         return ThreatIncidentSessionResult(conflict=True, message="incident has no available deception container")
-    session_id = str(uuid4())
-    await ensure_sdk_session_row(session, session_id)
-    session.add(AgentSessionMeta(
-        session_id=session_id,
+    scoped = await ensure_scoped_session(
+        session,
         session_type=SessionType.INCIDENT,
         title=f"Autonomous investigation: {incident.title}",
-        agent_code=DEFAULT_AGENT_CODE,
         owner_id=incident.owner_id,
         incident_id=incident.id,
-        is_automated=True,
-        selected_sandbox_container_id=container.id,
-        selected_sandbox_container_generation=status_generation(container),
-    ))
-    await session.flush()
-    return ThreatIncidentSessionResult(session_id=session_id)
+        sandbox_container_id=container.id,
+        sandbox_generation=status_generation(container),
+    )
+    return ThreatIncidentSessionResult(session_id=scoped.id)
 
 
 async def _incident_container(session, incident_id):
@@ -135,34 +132,22 @@ async def _incident_container(session, incident_id):
     return row
 
 
-async def list_threat_incident_sessions(incident_id: int, *, page: int, size: int, user_id: int, user_role: SystemUserRole):
+async def get_threat_incident_session(
+    incident_id: int,
+    *,
+    user_id: int,
+    user_role: SystemUserRole,
+):
     async with get_async_session() as session:
         incident = await session.get(ThreatIncident, incident_id)
         if incident is None or not _can_access_incident(incident, user_id, user_role):
             return None
-    return await list_sessions(page=page, size=size, user_id=user_id, user_role=user_role, incident_id=incident_id)
-
-
-async def delete_threat_incident_session(incident_id: int, session_id: str, *, user_id: int, user_role: SystemUserRole):
-    async with get_async_session() as session:
-        incident = await session.get(ThreatIncident, incident_id)
-        if incident is None or not _can_access_incident(incident, user_id, user_role):
-            return None
-        meta = await session.get(AgentSessionMeta, session_id)
-        if meta is None or meta.incident_id != incident_id:
-            return False
-    return await delete_session(session_id, user_id=user_id, user_role=user_role, allow_incident_session=True)
-
-
-async def can_run_threat_incident_session(session_id: str, user_id: int, user_role: SystemUserRole):
-    async with get_async_session() as session:
-        meta = await session.get(AgentSessionMeta, session_id)
-        if meta is None:
-            return False
-        if meta.incident_id is None:
-            return True
-        incident = await session.get(ThreatIncident, meta.incident_id)
-        return incident is not None and _can_access_incident(incident, user_id, user_role) and incident.status != ThreatIncidentStatus.CLOSED
+        session_id = (await session.exec(select(AgentSession.id).where(
+            AgentSession.incident_id == incident_id
+        ))).one_or_none()
+    if session_id is None:
+        return None
+    return await session_summary(session_id, user_id, user_role)
 
 
 async def sandbox_container_id_for_threat_incident(incident_id: int):

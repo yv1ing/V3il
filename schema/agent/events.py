@@ -1,40 +1,32 @@
-from enum import StrEnum
-from datetime import datetime
 import base64
+from datetime import datetime
+from enum import StrEnum
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, JsonValue, field_validator, model_validator
 
-from schema.agent.subordinates import AgentSubordinateStatus
+from schema.agent.types import (
+    AgentAttemptStatus,
+    AgentCode,
+    AgentRunStatus,
+    AgentSegmentKind,
+    AgentSegmentStatus,
+    AgentToolInvocationStatus,
+)
+from schema.sandbox.async_jobs import SandboxAsyncJobStatus
 
-
-class AgentEventTypeSchema(StrEnum):
-    USER_MESSAGE = "user_message"
-    TURN_BOUNDARY = "turn_boundary"
-    RUN_STATE = "run_state"
-    THINKING_DELTA = "thinking_delta"
-    THINKING_COMPLETE = "thinking_complete"
-    TEXT_DELTA = "text_delta"
-    TEXT_COMPLETE = "text_complete"
-    TOOL_CALL = "tool_call"
-    TOOL_RESULT = "tool_result"
-    SUBAGENT_TASK = "subagent_task"
-    DONE = "done"
-    ERROR = "error"
-
-
-class AgentInputPartTypeSchema(StrEnum):
+class AgentInputPartType(StrEnum):
     TEXT = "text"
     IMAGE = "image"
 
 
-class AgentImageDetailSchema(StrEnum):
+class AgentImageDetail(StrEnum):
     AUTO = "auto"
     LOW = "low"
     HIGH = "high"
 
 
-class AgentImageMediaTypeSchema(StrEnum):
+class AgentImageMediaType(StrEnum):
     PNG = "image/png"
     JPEG = "image/jpeg"
     WEBP = "image/webp"
@@ -43,33 +35,24 @@ class AgentImageMediaTypeSchema(StrEnum):
 MAX_AGENT_IMAGES = 4
 MAX_AGENT_IMAGE_BYTES = 15 * 1024 * 1024 // 4
 MAX_AGENT_TOTAL_IMAGE_BYTES = 6 * 1024 * 1024
-MAX_AGENT_TEXT_INPUT_CHARS = 20000
-
-
-def _base64_length(byte_count: int) -> int:
-    return ((byte_count + 2) // 3) * 4
-
-
-_MAX_IMAGE_BASE64_LENGTH = _base64_length(MAX_AGENT_IMAGE_BYTES)
+MAX_AGENT_TEXT_INPUT_CHARS = 20_000
 
 
 class AgentTextInputPart(BaseModel):
-    type: Literal[AgentInputPartTypeSchema.TEXT] = AgentInputPartTypeSchema.TEXT
+    type: Literal[AgentInputPartType.TEXT] = AgentInputPartType.TEXT
     text: str = Field(min_length=1, max_length=MAX_AGENT_TEXT_INPUT_CHARS)
 
     @field_validator("text", mode="before")
     @classmethod
     def normalize_text(cls, value: Any) -> Any:
-        if isinstance(value, str):
-            return value.strip()
-        return value
+        return value.strip() if isinstance(value, str) else value
 
 
 class AgentImageInputPart(BaseModel):
-    type: Literal[AgentInputPartTypeSchema.IMAGE] = AgentInputPartTypeSchema.IMAGE
-    media_type: AgentImageMediaTypeSchema
-    data: str = Field(min_length=1, max_length=_MAX_IMAGE_BASE64_LENGTH)
-    detail: AgentImageDetailSchema = AgentImageDetailSchema.AUTO
+    type: Literal[AgentInputPartType.IMAGE] = AgentInputPartType.IMAGE
+    media_type: AgentImageMediaType
+    data: str = Field(min_length=1, max_length=((MAX_AGENT_IMAGE_BYTES + 2) // 3) * 4)
+    detail: AgentImageDetail = AgentImageDetail.AUTO
 
     @field_validator("data")
     @classmethod
@@ -84,157 +67,250 @@ class AgentImageInputPart(BaseModel):
         return compact
 
 
-AgentInputPart = Annotated[
-    AgentTextInputPart | AgentImageInputPart,
-    Field(discriminator="type"),
-]
+AgentInputPart = Annotated[AgentTextInputPart | AgentImageInputPart, Field(discriminator="type")]
 
 
-class _AgentScopedEvent(BaseModel):
-    created_at: datetime
-    # per-session monotonic timeline ordinal stamped by the runtime event bus;
-    # 0 for control-only frames (run_state/done) that never enter the timeline
-    seq: int = 0
-    agent_name: str = ""
-    # when set, this event was streamed from inside a nested subagent call.
-    # `nested_for` is the parent agent code; `nested_call_id` matches the
-    # parent's function_call.call_id so the UI can attach the event to the
-    # corresponding ToolCard
-    nested_for: str = ""
-    nested_call_id: str = ""
+class AgentDurableEventType(StrEnum):
+    USER_MESSAGE = "user_message"
+    RUN_TRANSITION = "run_transition"
+    ATTEMPT_TRANSITION = "attempt_transition"
+    SEGMENT_COMPLETED = "segment_completed"
+    TOOL_CALL = "tool_call"
+    TOOL_RESULT = "tool_result"
+    TOOL_RECOVERY = "tool_recovery"
+    SANDBOX_RECOVERY = "sandbox_recovery"
+    DELEGATION = "delegation"
+    ERROR = "error"
 
 
-class UserMessageEvent(BaseModel):
-    type: Literal[AgentEventTypeSchema.USER_MESSAGE] = AgentEventTypeSchema.USER_MESSAGE
-    created_at: datetime
-    seq: int = 0
-    content: list[AgentInputPart] = Field(min_length=1)
-    display_text: str = ""
-    # the agent this message was @-mentioned to; UI renders it as a "@<name>" chip
-    target_agent_code: str = ""
+class AgentEventBase(BaseModel):
+    id: str
+    session_id: str
+    run_id: str | None = None
+    attempt_id: str | None = None
+    seq: int = Field(ge=1)
+    occurred_at: datetime
 
 
-class TurnBoundaryEvent(_AgentScopedEvent):
-    type: Literal[AgentEventTypeSchema.TURN_BOUNDARY] = AgentEventTypeSchema.TURN_BOUNDARY
+class UserMessageEvent(AgentEventBase):
+    type: Literal[AgentDurableEventType.USER_MESSAGE] = AgentDurableEventType.USER_MESSAGE
+    agent_code: AgentCode
+    content: list[AgentInputPart]
+    display_text: str
 
 
-class RunStateEvent(BaseModel):
-    type: Literal[AgentEventTypeSchema.RUN_STATE] = AgentEventTypeSchema.RUN_STATE
-    created_at: datetime
-    seq: int = 0
-    running: bool
+class RunTransitionEvent(AgentEventBase):
+    type: Literal[AgentDurableEventType.RUN_TRANSITION] = AgentDurableEventType.RUN_TRANSITION
+    previous_status: AgentRunStatus | None = None
+    status: AgentRunStatus
+    reason: str = ""
 
 
-class TextDeltaEvent(_AgentScopedEvent):
-    type: Literal[AgentEventTypeSchema.TEXT_DELTA] = AgentEventTypeSchema.TEXT_DELTA
+class AttemptTransitionEvent(AgentEventBase):
+    type: Literal[AgentDurableEventType.ATTEMPT_TRANSITION] = AgentDurableEventType.ATTEMPT_TRANSITION
+    previous_status: AgentAttemptStatus | None = None
+    status: AgentAttemptStatus
+    reason: str = ""
+
+
+class SegmentCompletedEvent(AgentEventBase):
+    type: Literal[AgentDurableEventType.SEGMENT_COMPLETED] = AgentDurableEventType.SEGMENT_COMPLETED
     segment_id: str
-    delta: str
+    segment_kind: AgentSegmentKind
+    status: AgentSegmentStatus
+    agent_code: AgentCode
     text: str
 
 
-class TextCompleteEvent(_AgentScopedEvent):
-    type: Literal[AgentEventTypeSchema.TEXT_COMPLETE] = AgentEventTypeSchema.TEXT_COMPLETE
-    segment_id: str
-    text: str
-
-
-class ThinkingDeltaEvent(_AgentScopedEvent):
-    type: Literal[AgentEventTypeSchema.THINKING_DELTA] = AgentEventTypeSchema.THINKING_DELTA
-    segment_id: str
-    delta: str
-    text: str
-
-
-class ThinkingCompleteEvent(_AgentScopedEvent):
-    type: Literal[AgentEventTypeSchema.THINKING_COMPLETE] = AgentEventTypeSchema.THINKING_COMPLETE
-    segment_id: str
-    text: str
-
-
-class ToolCallEvent(_AgentScopedEvent):
-    type: Literal[AgentEventTypeSchema.TOOL_CALL] = AgentEventTypeSchema.TOOL_CALL
+class ToolCallEvent(AgentEventBase):
+    type: Literal[AgentDurableEventType.TOOL_CALL] = AgentDurableEventType.TOOL_CALL
     call_id: str
+    agent_code: AgentCode
     name: str
-    arguments: dict[str, Any] = Field(default_factory=dict)
+    arguments: dict[str, JsonValue] = Field(default_factory=dict)
 
 
-class ToolResultEvent(_AgentScopedEvent):
-    type: Literal[AgentEventTypeSchema.TOOL_RESULT] = AgentEventTypeSchema.TOOL_RESULT
+class ToolResultEvent(AgentEventBase):
+    type: Literal[AgentDurableEventType.TOOL_RESULT] = AgentDurableEventType.TOOL_RESULT
     call_id: str
+    agent_code: AgentCode
     output: str = ""
     is_error: bool = False
 
 
-class SubagentTaskEvent(_AgentScopedEvent):
-    type: Literal[AgentEventTypeSchema.SUBAGENT_TASK] = AgentEventTypeSchema.SUBAGENT_TASK
-    run_id: str
-    parent_agent_code: str = ""
-    parent_agent_instance_id: str = ""
-    agent_code: str
-    status: AgentSubordinateStatus
-    result_preview: str = ""
-    error_preview: str = ""
-    result_chars: int = 0
-    error_chars: int = 0
-    truncated: bool = False
-    progress: str = ""
+class ToolRecoveryEvent(AgentEventBase):
+    type: Literal[AgentDurableEventType.TOOL_RECOVERY] = AgentDurableEventType.TOOL_RECOVERY
+    invocation_id: str
+    call_id: str
+    agent_code: AgentCode
+    status: AgentToolInvocationStatus
+    resolved_by: str
+    resolution_note: str
 
 
-class DoneEvent(_AgentScopedEvent):
-    type: Literal[AgentEventTypeSchema.DONE] = AgentEventTypeSchema.DONE
+class SandboxRecoveryEvent(AgentEventBase):
+    type: Literal[AgentDurableEventType.SANDBOX_RECOVERY] = AgentDurableEventType.SANDBOX_RECOVERY
+    sandbox_job_id: str
+    status: SandboxAsyncJobStatus
+    resolved_by: str
+    resolution_note: str
 
 
-class ErrorEvent(_AgentScopedEvent):
-    type: Literal[AgentEventTypeSchema.ERROR] = AgentEventTypeSchema.ERROR
+class DelegationEvent(AgentEventBase):
+    type: Literal[AgentDurableEventType.DELEGATION] = AgentDurableEventType.DELEGATION
+    child_run_id: str
+    parent_agent_code: AgentCode
+    child_agent_code: AgentCode
+    status: AgentRunStatus
+    summary: str = ""
+
+
+class AgentErrorEvent(AgentEventBase):
+    type: Literal[AgentDurableEventType.ERROR] = AgentDurableEventType.ERROR
+    code: str
     message: str
-    code: str = ""
 
 
-# everything that shows up in stored history (DoneEvent is a stream control signal only)
-AgentContentEventSchema = Annotated[
+AgentDurableEvent = Annotated[
     UserMessageEvent
-    | TurnBoundaryEvent
-    | TextDeltaEvent
-    | TextCompleteEvent
-    | ThinkingDeltaEvent
-    | ThinkingCompleteEvent
+    | RunTransitionEvent
+    | AttemptTransitionEvent
+    | SegmentCompletedEvent
     | ToolCallEvent
     | ToolResultEvent
-    | SubagentTaskEvent
-    | ErrorEvent,
+    | ToolRecoveryEvent
+    | SandboxRecoveryEvent
+    | DelegationEvent
+    | AgentErrorEvent,
     Field(discriminator="type"),
 ]
 
-AgentEventSchema = Annotated[
-    UserMessageEvent
-    | TurnBoundaryEvent
-    | RunStateEvent
-    | TextDeltaEvent
-    | TextCompleteEvent
-    | ThinkingDeltaEvent
-    | ThinkingCompleteEvent
-    | ToolCallEvent
-    | ToolResultEvent
-    | SubagentTaskEvent
-    | DoneEvent
-    | ErrorEvent,
+
+class AgentSegmentSnapshot(BaseModel):
+    segment_id: str
+    run_id: str
+    attempt_id: str
+    segment_kind: AgentSegmentKind
+    status: AgentSegmentStatus
+    text: str
+    persisted_utf16_offset: int = Field(
+        ge=0,
+        description="Persisted text length measured in UTF-16 code units.",
+    )
+
+    @model_validator(mode="after")
+    def validate_persisted_utf16_offset(self) -> "AgentSegmentSnapshot":
+        if self.persisted_utf16_offset != _utf16_length(self.text):
+            raise ValueError("persisted UTF-16 offset must match the snapshot text")
+        return self
+
+
+class AgentServerFrameType(StrEnum):
+    HELLO = "hello"
+    REPLAY = "replay"
+    EVENT = "event"
+    DELTA = "delta"
+    REBASE_REQUIRED = "rebase_required"
+    HEARTBEAT = "heartbeat"
+    ERROR = "error"
+
+
+class AgentHelloFrame(BaseModel):
+    type: Literal[AgentServerFrameType.HELLO] = AgentServerFrameType.HELLO
+    session_id: str
+    durable_head_seq: int = Field(ge=0)
+    active_run_ids: list[str] = Field(default_factory=list)
+    segments: list[AgentSegmentSnapshot] = Field(default_factory=list)
+
+
+class AgentReplayFrame(BaseModel):
+    type: Literal[AgentServerFrameType.REPLAY] = AgentServerFrameType.REPLAY
+    events: list[AgentDurableEvent]
+    durable_head_seq: int = Field(ge=0)
+
+
+class AgentEventFrame(BaseModel):
+    type: Literal[AgentServerFrameType.EVENT] = AgentServerFrameType.EVENT
+    event: AgentDurableEvent
+
+
+class AgentDeltaFrame(BaseModel):
+    type: Literal[AgentServerFrameType.DELTA] = AgentServerFrameType.DELTA
+    run_id: str
+    attempt_id: str
+    segment_id: str
+    segment_kind: AgentSegmentKind
+    start_utf16_offset: int = Field(
+        ge=0,
+        description="Delta start offset measured in UTF-16 code units.",
+    )
+    end_utf16_offset: int = Field(
+        ge=0,
+        description="Delta end offset measured in UTF-16 code units.",
+    )
+    delta: str
+
+    @model_validator(mode="after")
+    def validate_delta_offsets(self) -> "AgentDeltaFrame":
+        if self.end_utf16_offset - self.start_utf16_offset != _utf16_length(self.delta):
+            raise ValueError("delta UTF-16 offsets must match the delta text")
+        return self
+
+
+class AgentRebaseRequiredFrame(BaseModel):
+    type: Literal[AgentServerFrameType.REBASE_REQUIRED] = AgentServerFrameType.REBASE_REQUIRED
+    durable_head_seq: int = Field(ge=0)
+    reason: str
+
+
+class AgentHeartbeatFrame(BaseModel):
+    type: Literal[AgentServerFrameType.HEARTBEAT] = AgentServerFrameType.HEARTBEAT
+    sent_at: datetime
+
+
+class AgentStreamErrorFrame(BaseModel):
+    type: Literal[AgentServerFrameType.ERROR] = AgentServerFrameType.ERROR
+    code: str
+    message: str
+
+
+AgentServerFrame = Annotated[
+    AgentHelloFrame
+    | AgentReplayFrame
+    | AgentEventFrame
+    | AgentDeltaFrame
+    | AgentRebaseRequiredFrame
+    | AgentHeartbeatFrame
+    | AgentStreamErrorFrame,
     Field(discriminator="type"),
 ]
+
+
+class AgentClientFrameType(StrEnum):
+    ACK = "ack"
+    PING = "ping"
+
+
+class AgentAckFrame(BaseModel):
+    type: Literal[AgentClientFrameType.ACK] = AgentClientFrameType.ACK
+    durable_seq: int = Field(ge=0)
+
+
+class AgentPingFrame(BaseModel):
+    type: Literal[AgentClientFrameType.PING] = AgentClientFrameType.PING
+
+
+AgentClientFrame = Annotated[AgentAckFrame | AgentPingFrame, Field(discriminator="type")]
 
 
 def validate_agent_input_content(content: list[AgentInputPart]) -> None:
-    image_count = sum(1 for part in content if isinstance(part, AgentImageInputPart))
-    if image_count > MAX_AGENT_IMAGES:
+    images = [part for part in content if isinstance(part, AgentImageInputPart)]
+    if len(images) > MAX_AGENT_IMAGES:
         raise ValueError(f"at most {MAX_AGENT_IMAGES} images are allowed in one message")
-    image_bytes = sum(
-        _decoded_base64_length(part.data)
-        for part in content
-        if isinstance(part, AgentImageInputPart)
-    )
-    if image_bytes > MAX_AGENT_TOTAL_IMAGE_BYTES:
+    decoded_bytes = sum(len(part.data) * 3 // 4 - (len(part.data) - len(part.data.rstrip("="))) for part in images)
+    if decoded_bytes > MAX_AGENT_TOTAL_IMAGE_BYTES:
         raise ValueError("image payload is too large")
 
 
-def _decoded_base64_length(value: str) -> int:
-    padding = len(value) - len(value.rstrip("="))
-    return len(value) * 3 // 4 - padding
+def _utf16_length(value: str) -> int:
+    return len(value.encode("utf-16-le")) // 2

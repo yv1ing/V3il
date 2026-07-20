@@ -1,4 +1,3 @@
-from agents.extensions.memory import SQLAlchemySession
 from sqlalchemy import URL
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlmodel import SQLModel
@@ -21,12 +20,18 @@ from model.detection.rules import (
     ManagedHostSensor,
 )
 from model.sandbox.async_jobs import SandboxAsyncJob
-from model.agent.notifications import AgentNotification
-from model.agent.subordinates import AgentSubordinateTask
-from model.agent.message_meta import AgentMessageMeta
-from model.agent.event_log import AgentEventLog
-from model.agent.context_compactions import AgentContextCompaction
-from model.agent.sessions import AgentSessionMeta
+from model.agent.sessions import (
+    AgentCompaction,
+    AgentContext,
+    AgentContextItem,
+    AgentEvent,
+    AgentRun,
+    AgentRunAttempt,
+    AgentSegment,
+    AgentSession,
+    AgentToolInvocation,
+)
+from model.runtime import RuntimeConsumerReceipt, RuntimeLease, RuntimeOutboxEvent
 from model.sandbox.containers import SandboxContainer
 from model.sandbox.images import SandboxImage
 from model.system_user.users import SystemUser
@@ -40,15 +45,16 @@ from model.threat.analysis import (
 )
 from model.threat.chains import AttackChain
 from model.threat.incidents import ThreatIncident, ThreatIncidentEnvironment
-from model.threat.intelligence import IntelligenceReport, ThreatIndicator
+from model.threat.intelligence import IntelligenceReport, IntelligenceReportArtifact, ThreatIndicator
 from model.threat.investigations import (
     AuditEvent,
     InvestigationEvidence,
+    EvidenceBehaviorLink,
+    EvidenceRelation,
     InvestigationTask,
     InvestigationTaskDependency,
     InvestigationTaskEvent,
 )
-from utils.sdk_tables import agent_messages, agent_sessions
 
 
 logger = get_logger(__name__)
@@ -63,13 +69,15 @@ _registered_models = [
     ThreatIncident, ThreatIncidentEnvironment, BehaviorEvent, BehaviorSensorCursor,
     ThreatIncidentBehaviorEvent,
     InvestigationTask, InvestigationTaskDependency, InvestigationTaskEvent,
-    InvestigationEvidence, AuditEvent,
+    InvestigationEvidence, EvidenceBehaviorLink, EvidenceRelation, AuditEvent,
     AnalysisRecord, AnalysisEvidenceLink, IntentAssessment, AttackChain,
     ThreatIndicator, AttackerProfile, RiskAssessment, IntelligenceReport,
-    AgentSessionMeta, AgentMessageMeta, AgentContextCompaction,
-    AgentSubordinateTask, AgentNotification, SandboxAsyncJob, AgentEventLog,
+    IntelligenceReportArtifact,
+    AgentSession, AgentContext, AgentRun, AgentRunAttempt, AgentContextItem,
+    AgentToolInvocation,
+    AgentSegment, AgentEvent, AgentCompaction, SandboxAsyncJob,
+    RuntimeOutboxEvent, RuntimeConsumerReceipt, RuntimeLease,
 ]
-_registered_sdk_tables = [agent_sessions, agent_messages]
 
 _engine: AsyncEngine | None = None
 
@@ -78,15 +86,6 @@ async def create_all_tables() -> None:
     global _engine
     if _engine is None:
         raise RuntimeError("database engine is not initialized")
-
-    # The SDK owns its session schema. Initialize it through the public session API
-    # before creating app tables whose foreign keys reference that schema.
-    sdk_session = SQLAlchemySession(
-        session_id="__schema_initialization__",
-        engine=_engine,
-        create_tables=True,
-    )
-    await sdk_session.get_items(limit=0)
 
     async with _engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)

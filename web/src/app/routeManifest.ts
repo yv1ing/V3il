@@ -16,7 +16,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { lazy, type ComponentType, type LazyExoticComponent } from "react";
-import { DEFAULT_ADMIN_PATH } from "./routePaths";
+import { AGENT_CONSOLE_PATH, DEFAULT_ADMIN_PATH } from "./routePaths";
 
 type AdminRoute = {
   path: string;
@@ -73,7 +73,12 @@ export const adminRoutes: readonly AdminRoute[] = [
     "DeceptionWorkspacePage",
   ),
   defineRoute(
-    { path: "/playground", label: "Agent Console", eyebrow: "Expert Collaboration", icon: MessageSquareCode, adminOnly: false, navigation: true, group: "Operations" },
+    { path: AGENT_CONSOLE_PATH, label: "Agent Console", eyebrow: "Expert Collaboration", icon: MessageSquareCode, adminOnly: false, navigation: true, group: "Operations" },
+    () => import("../features/playground/PlaygroundPage"),
+    "PlaygroundPage",
+  ),
+  defineRoute(
+    { path: `${AGENT_CONSOLE_PATH}/session/:sessionId`, label: "Agent Console", eyebrow: "Expert Collaboration", icon: MessageSquareCode, adminOnly: false, navigation: false, group: "Operations" },
     () => import("../features/playground/PlaygroundPage"),
     "PlaygroundPage",
   ),

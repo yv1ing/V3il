@@ -36,11 +36,21 @@ import {
 import { showApiError, showApiSuccess } from "../../shared/api/feedback";
 import { queryDeceptionEnvironments } from "../../shared/api/deceptionEnvironments";
 import {
+  BEHAVIOR_CLASSIFICATION,
+  CENTRAL_RULE_OPERATOR,
+  DETECTION_RULE_CHANGE_ACTION,
   DETECTION_RULE_CHANGE_ACTION_VALUES,
+  DETECTION_RULE_CHANGE_DECISION,
+  DETECTION_RULE_CHANGE_DECISION_VALUES,
+  DETECTION_RULE_CHANGE_STATUS,
+  DETECTION_RULE_ORIGIN,
   DETECTION_RULE_SCOPE,
   DETECTION_RULE_SCOPE_VALUES,
   DETECTION_RULE_TYPE,
   DETECTION_RULE_TYPE_VALUES,
+  DETECTION_RULE_VERSION_STATUS,
+  DETECTION_SENSOR_HEALTH_STATUS,
+  PAGINATION_MAXIMUM_PAGE_SIZE,
   SYSTEM_USER_ROLE,
 } from "../../shared/api/generated/constants";
 import type {
@@ -51,6 +61,7 @@ import type {
   DetectionRule,
   DetectionRuleChange,
   DetectionRuleChangeAction,
+  DetectionRuleChangeDecision,
   DetectionRuleDeployment,
   DetectionRuleScope,
   DetectionRuleType,
@@ -68,12 +79,12 @@ import { formatEnumLabel } from "../../shared/lib/labels";
 import { OperationalTag, RiskScore } from "../operations/OperationalUi";
 import "../../app/styles/detection.css";
 
-const PAGE_SIZE = 100;
+const PAGE_SIZE = PAGINATION_MAXIMUM_PAGE_SIZE;
 const CENTRAL_RULE_TEMPLATE = JSON.stringify({
   signal_kind: "custom_signal",
-  classification: "suspicious",
+  classification: BEHAVIOR_CLASSIFICATION.SUSPICIOUS,
   score: 60,
-  all: [{ field: "source_ip", operator: "exists", value: true }],
+  all: [{ field: "source_ip", operator: CENTRAL_RULE_OPERATOR.EXISTS, value: true }],
   any: [],
   threshold: 1,
   window_seconds: 60,
@@ -97,7 +108,7 @@ type RuleForm = {
 
 type VersionEditorState = { rule: DetectionRule; parent: DetectionRuleVersion | null; content: string };
 type ChangeFormState = { rule: DetectionRule; versionId: number | null; action: DetectionRuleChangeAction; sensorIds: string; reason: string };
-type DecisionFormState = { change: DetectionRuleChange; decision: "approve" | "reject" | "request_changes"; reason: string };
+type DecisionFormState = { change: DetectionRuleChange; decision: DetectionRuleChangeDecision; reason: string };
 
 const EMPTY_RULE: RuleForm = {
   name: "",
@@ -186,17 +197,17 @@ export function DetectionPage() {
       const response = await queryDetectionRuleVersions(rule.id, { page: 1, size: PAGE_SIZE });
       const items = response.data?.items ?? [];
       setVersions(items);
-      const defaultVersion = items.find((item) => item.status === "validated")?.id ?? rule.active_version_id;
+      const defaultVersion = items.find((item) => item.status === DETECTION_RULE_VERSION_STATUS.VALIDATED)?.id ?? rule.active_version_id;
       const environmentHostId = environments.find((item) => item.id === rule.environment_id)?.host_id;
       const targetSensors = sensors.filter((sensor) => (
-        rule.scope === "global"
-        || (rule.scope === "host" && sensor.host_id === rule.host_id)
-        || (rule.scope === "environment" && sensor.host_id === environmentHostId)
+        rule.scope === DETECTION_RULE_SCOPE.GLOBAL
+        || (rule.scope === DETECTION_RULE_SCOPE.HOST && sensor.host_id === rule.host_id)
+        || (rule.scope === DETECTION_RULE_SCOPE.ENVIRONMENT && sensor.host_id === environmentHostId)
       ));
       setChangeForm({
         rule,
         versionId: defaultVersion,
-        action: rule.active_version_id ? "replace" : "activate",
+        action: rule.active_version_id ? DETECTION_RULE_CHANGE_ACTION.REPLACE : DETECTION_RULE_CHANGE_ACTION.ACTIVATE,
         sensorIds: targetSensors.map((item) => item.id).join(", "),
         reason: "",
       });
@@ -268,7 +279,7 @@ export function DetectionPage() {
     await runMutation(async () => {
       const response = await submitDetectionRuleChange(changeForm.rule.id, {
         action: changeForm.action,
-        rule_version_id: changeForm.action === "disable" ? null : changeForm.versionId,
+        rule_version_id: changeForm.action === DETECTION_RULE_CHANGE_ACTION.DISABLE ? null : changeForm.versionId,
         target_sensor_ids: targetIds,
         reason: changeForm.reason.trim(),
       });
@@ -314,11 +325,11 @@ export function DetectionPage() {
     try { await operation(); } catch (error) { showApiError(error); } finally { setBusy(false); }
   };
 
-  const pendingCount = changes.filter((item) => item.status === "pending_approval").length;
+  const pendingCount = changes.filter((item) => item.status === DETECTION_RULE_CHANGE_STATUS.PENDING_APPROVAL).length;
   const metrics = useMemo(() => ({
     activeRules: rules.filter((rule) => rule.active_version_id !== null).length,
     pendingCount,
-    healthySensors: sensors.filter((sensor) => sensor.status === "healthy").length,
+    healthySensors: sensors.filter((sensor) => sensor.status === DETECTION_SENSOR_HEALTH_STATUS.HEALTHY).length,
     criticalSignals: signals.filter((signal) => signal.score >= 90).length,
   }), [changes, pendingCount, rules, sensors, signals]);
 
@@ -377,9 +388,9 @@ function RulesTable({ rules, busy, onVersions, onChange }: { rules: DetectionRul
       columns={[
         { title: "Rule", render: (_: unknown, rule: DetectionRule) => <div className="detection-primary"><strong>{rule.name}</strong><small>{rule.description || "No description"}</small></div> },
         { title: "Type", dataIndex: "type", width: 150, render: (value: string) => <Tag color="blue">{formatEnumLabel(value)}</Tag> },
-        { title: "Origin", dataIndex: "origin", width: 110, render: (value: string) => <Tag color={value === "agent" ? "cyan" : value === "builtin" ? "amber" : "grey"}>{formatEnumLabel(value)}</Tag> },
+        { title: "Origin", dataIndex: "origin", width: 110, render: (value: string) => <Tag color={value === DETECTION_RULE_ORIGIN.AGENT ? "cyan" : value === DETECTION_RULE_ORIGIN.BUILTIN ? "amber" : "grey"}>{formatEnumLabel(value)}</Tag> },
         { title: "Scope", dataIndex: "scope", width: 125, render: (value: string) => formatEnumLabel(value) },
-        { title: "Active", dataIndex: "active_version_id", width: 90, render: (value: number | null) => value ? <OperationalTag value="active" /> : <OperationalTag value="draft" /> },
+        { title: "Active", dataIndex: "active_version_id", width: 90, render: (value: number | null) => value ? <OperationalTag value={DETECTION_RULE_CHANGE_STATUS.ACTIVE} /> : <OperationalTag value={DETECTION_RULE_VERSION_STATUS.DRAFT} /> },
         { title: "Updated", dataIndex: "updated_at", width: 165, render: (value: string) => formatDateTime(value) },
         { title: "", width: 100, render: (_: unknown, rule: DetectionRule) => <div className="row-actions"><Tooltip content="Versions"><Button theme="borderless" icon={<Diff size={15} />} onClick={() => onVersions(rule)} /></Tooltip><Tooltip content="Submit change"><Button theme="borderless" icon={<Send size={15} />} disabled={busy} onClick={() => onChange(rule)} /></Tooltip></div> },
       ]}
@@ -387,7 +398,7 @@ function RulesTable({ rules, busy, onVersions, onChange }: { rules: DetectionRul
   );
 }
 
-function ChangesTable({ changes, busy, onDecision, onDeployments }: { changes: DetectionRuleChange[]; busy: boolean; onDecision: (change: DetectionRuleChange, decision: "approve" | "reject" | "request_changes") => void; onDeployments: (change: DetectionRuleChange) => void }) {
+function ChangesTable({ changes, busy, onDecision, onDeployments }: { changes: DetectionRuleChange[]; busy: boolean; onDecision: (change: DetectionRuleChange, decision: DetectionRuleChangeDecision) => void; onDeployments: (change: DetectionRuleChange) => void }) {
   return (
     <Table
       className="detection-table detection-fill-table"
@@ -396,13 +407,13 @@ function ChangesTable({ changes, busy, onDecision, onDeployments }: { changes: D
       pagination={false}
       empty={<EmptyState className="data-table-empty" compact icon={<GitPullRequestArrow size={30} />} title="No rule change requests" />}
       columns={[
-        { title: "Request", render: (_: unknown, item: DetectionRuleChange) => <div className="detection-primary"><strong>Rule #{item.rule_id} · {formatEnumLabel(item.action)}</strong><small>{item.requested_by_actor_type}:{item.requested_by_actor_code || "system"}</small></div> },
+        { title: "Request", render: (_: unknown, item: DetectionRuleChange) => <div className="detection-primary"><strong>Rule #{item.rule_id} · {formatEnumLabel(item.action)}</strong><small>{item.error || `${item.requested_by_actor_type}:${item.requested_by_actor_code || "system"}`}</small></div> },
         { title: "Scope", dataIndex: "scope", width: 120, render: (value: string) => formatEnumLabel(value) },
         { title: "Targets", dataIndex: "target_sensor_ids", width: 100, render: (value: number[]) => value.join(", ") },
         { title: "Bundle", dataIndex: "effective_bundle_hash", width: 135, render: (value: string) => <code>{shortHash(value)}</code> },
         { title: "Status", dataIndex: "status", width: 145, render: (value: string) => <OperationalTag value={value} /> },
         { title: "Created", dataIndex: "created_at", width: 165, render: (value: string) => formatDateTime(value) },
-        { title: "", width: 145, render: (_: unknown, item: DetectionRuleChange) => <div className="row-actions">{item.status === "pending_approval" ? <><Tooltip content="Approve exact request"><Button theme="borderless" type="primary" icon={<Check size={15} />} disabled={busy} onClick={() => onDecision(item, "approve")} /></Tooltip><Tooltip content="Request changes"><Button theme="borderless" icon={<RotateCcw size={15} />} disabled={busy} onClick={() => onDecision(item, "request_changes")} /></Tooltip><Tooltip content="Reject"><Button theme="borderless" type="danger" icon={<X size={15} />} disabled={busy} onClick={() => onDecision(item, "reject")} /></Tooltip></> : null}<Tooltip content="Deployment details"><Button theme="borderless" icon={<ServerCog size={15} />} onClick={() => onDeployments(item)} /></Tooltip></div> },
+        { title: "", width: 145, render: (_: unknown, item: DetectionRuleChange) => <div className="row-actions">{item.status === DETECTION_RULE_CHANGE_STATUS.PENDING_APPROVAL ? <><Tooltip content="Approve exact request"><Button theme="borderless" type="primary" icon={<Check size={15} />} disabled={busy} onClick={() => onDecision(item, DETECTION_RULE_CHANGE_DECISION.APPROVE)} /></Tooltip><Tooltip content="Request changes"><Button theme="borderless" icon={<RotateCcw size={15} />} disabled={busy} onClick={() => onDecision(item, DETECTION_RULE_CHANGE_DECISION.REQUEST_CHANGES)} /></Tooltip><Tooltip content="Reject"><Button theme="borderless" type="danger" icon={<X size={15} />} disabled={busy} onClick={() => onDecision(item, DETECTION_RULE_CHANGE_DECISION.REJECT)} /></Tooltip></> : null}<Tooltip content="Deployment details"><Button theme="borderless" icon={<ServerCog size={15} />} onClick={() => onDeployments(item)} /></Tooltip></div> },
       ]}
     />
   );
@@ -527,15 +538,15 @@ function VersionEditorModal({ value, busy, onChange, onCancel, onSave }: { value
 }
 
 function ChangeModal({ value, versions, busy, onChange, onCancel, onSubmit }: { value: ChangeFormState | null; versions: DetectionRuleVersion[]; busy: boolean; onChange: (value: ChangeFormState | null) => void; onCancel: () => void; onSubmit: () => void }) {
-  const validated = versions.filter((item) => item.status === "validated");
-  return <AppModal open={Boolean(value)} title="Submit Rule Change" titleIcon={<Send size={17} />} size="standard" onCancel={onCancel} footer={<><Button onClick={onCancel}>Cancel</Button><Button theme="solid" type="primary" loading={busy} disabled={!value?.reason.trim() || !parseIds(value?.sensorIds ?? "").length || (value?.action !== "disable" && !value?.versionId)} onClick={onSubmit}>Submit for Approval</Button></>}>
-    {value ? <div className="detection-form"><div className="detection-binding"><span>Rule</span><strong>{value.rule.name}</strong><span>Scope</span><strong>{formatEnumLabel(value.rule.scope)}</strong></div><div className="detection-form-grid"><Field label="Action"><Select value={value.action} optionList={DETECTION_RULE_CHANGE_ACTION_VALUES.map((item) => ({ value: item, label: formatEnumLabel(item) }))} onChange={(action) => onChange({ ...value, action: action as DetectionRuleChangeAction })} /></Field>{value.action !== "disable" ? <Field label="Validated Version"><Select value={value.versionId ?? undefined} optionList={validated.map((item) => ({ value: item.id, label: `v${item.version} · ${shortHash(item.content_sha256)}` }))} onChange={(versionId) => onChange({ ...value, versionId: Number(versionId) })} /></Field> : null}</div><Field label="Target Sensor IDs"><Input value={value.sensorIds} onChange={(sensorIds) => onChange({ ...value, sensorIds })} /></Field><Field label="Reason"><TextArea value={value.reason} autosize={{ minRows: 4, maxRows: 8 }} onChange={(reason) => onChange({ ...value, reason })} /></Field></div> : null}
+  const validated = versions.filter((item) => item.status === DETECTION_RULE_VERSION_STATUS.VALIDATED);
+  return <AppModal open={Boolean(value)} title="Submit Rule Change" titleIcon={<Send size={17} />} size="standard" onCancel={onCancel} footer={<><Button onClick={onCancel}>Cancel</Button><Button theme="solid" type="primary" loading={busy} disabled={!value?.reason.trim() || !parseIds(value?.sensorIds ?? "").length || (value?.action !== DETECTION_RULE_CHANGE_ACTION.DISABLE && !value?.versionId)} onClick={onSubmit}>Submit for Approval</Button></>}>
+    {value ? <div className="detection-form"><div className="detection-binding"><span>Rule</span><strong>{value.rule.name}</strong><span>Scope</span><strong>{formatEnumLabel(value.rule.scope)}</strong></div><div className="detection-form-grid"><Field label="Action"><Select value={value.action} optionList={DETECTION_RULE_CHANGE_ACTION_VALUES.map((item) => ({ value: item, label: formatEnumLabel(item) }))} onChange={(action) => onChange({ ...value, action: action as DetectionRuleChangeAction })} /></Field>{value.action !== DETECTION_RULE_CHANGE_ACTION.DISABLE ? <Field label="Validated Version"><Select value={value.versionId ?? undefined} optionList={validated.map((item) => ({ value: item.id, label: `v${item.version} · ${shortHash(item.content_sha256)}` }))} onChange={(versionId) => onChange({ ...value, versionId: Number(versionId) })} /></Field> : null}</div><Field label="Target Sensor IDs"><Input value={value.sensorIds} onChange={(sensorIds) => onChange({ ...value, sensorIds })} /></Field><Field label="Reason"><TextArea value={value.reason} autosize={{ minRows: 4, maxRows: 8 }} onChange={(reason) => onChange({ ...value, reason })} /></Field></div> : null}
   </AppModal>;
 }
 
 function DecisionModal({ value, busy, onChange, onCancel, onSubmit }: { value: DecisionFormState | null; busy: boolean; onChange: (value: DecisionFormState | null) => void; onCancel: () => void; onSubmit: () => void }) {
-  return <AppModal open={Boolean(value)} title="Confirm Rule Change" titleIcon={<FileCheck2 size={17} />} size="standard" onCancel={onCancel} footer={<><Button onClick={onCancel}>Cancel</Button><Button theme="solid" type={value?.decision === "reject" ? "danger" : "primary"} loading={busy} disabled={!value?.reason.trim()} onClick={onSubmit}>{value ? formatEnumLabel(value.decision) : "Confirm"}</Button></>}>
-    {value ? <div className="detection-form"><div className="detection-approval-hash"><span>Action</span><strong>{formatEnumLabel(value.change.action)}</strong><span>Rule Version</span><strong>{value.change.rule_version_id ? `#${value.change.rule_version_id}` : "Disable active version"}</strong><span>Content SHA-256</span><code>{value.change.content_sha256 || "-"}</code><span>Scope / Targets</span><strong>{formatEnumLabel(value.change.scope)} · {value.change.target_sensor_ids.join(", ")}</strong><span>Effective Bundle</span><code>{value.change.effective_bundle_hash}</code></div><Field label="Decision"><Select value={value.decision} optionList={[{ value: "approve", label: "Approve" }, { value: "request_changes", label: "Request Changes" }, { value: "reject", label: "Reject" }]} onChange={(decision) => onChange({ ...value, decision: decision as typeof value.decision })} /></Field><Field label="Reason"><TextArea value={value.reason} autosize={{ minRows: 4, maxRows: 8 }} onChange={(reason) => onChange({ ...value, reason })} /></Field></div> : null}
+  return <AppModal open={Boolean(value)} title="Confirm Rule Change" titleIcon={<FileCheck2 size={17} />} size="standard" onCancel={onCancel} footer={<><Button onClick={onCancel}>Cancel</Button><Button theme="solid" type={value?.decision === DETECTION_RULE_CHANGE_DECISION.REJECT ? "danger" : "primary"} loading={busy} disabled={!value?.reason.trim()} onClick={onSubmit}>{value ? formatEnumLabel(value.decision) : "Confirm"}</Button></>}>
+    {value ? <div className="detection-form"><div className="detection-approval-hash"><span>Action</span><strong>{formatEnumLabel(value.change.action)}</strong><span>Rule Version</span><strong>{value.change.rule_version_id ? `#${value.change.rule_version_id}` : "Disable active version"}</strong><span>Content SHA-256</span><code>{value.change.content_sha256 || "-"}</code><span>Scope / Targets</span><strong>{formatEnumLabel(value.change.scope)} · {value.change.target_sensor_ids.join(", ")}</strong><span>Effective Bundle</span><code>{value.change.effective_bundle_hash}</code></div><Field label="Decision"><Select value={value.decision} optionList={DETECTION_RULE_CHANGE_DECISION_VALUES.map((decision) => ({ value: decision, label: formatEnumLabel(decision) }))} onChange={(decision) => onChange({ ...value, decision: decision as DetectionRuleChangeDecision })} /></Field><Field label="Reason"><TextArea value={value.reason} autosize={{ minRows: 4, maxRows: 8 }} onChange={(reason) => onChange({ ...value, reason })} /></Field></div> : null}
   </AppModal>;
 }
 
@@ -545,7 +556,7 @@ function DeploymentsModal({ value, onClose }: { value: { change: DetectionRuleCh
       open={Boolean(value)}
       title="Deployment Results"
       titleIcon={<ServerCog size={17} />}
-      size="standard"
+      size="wide"
       onCancel={onClose}
     >
       {value ? (
@@ -557,13 +568,38 @@ function DeploymentsModal({ value, onClose }: { value: { change: DetectionRuleCh
           empty={<EmptyState className="data-table-empty" compact icon={<ServerCog size={30} />} title="No deployment results" />}
           columns={[
             { title: "Sensor", dataIndex: "sensor_id", width: 90 },
-            { title: "Status", dataIndex: "status", width: 130, render: (status: string) => <OperationalTag value={status} /> },
-            { title: "Target Bundle", dataIndex: "target_bundle_hash", render: (hash: string) => <code>{shortHash(hash)}</code> },
-            { title: "Error", dataIndex: "error", render: (error: string) => error || "-" },
+            { title: "Phase", dataIndex: "status", width: 130, render: (status: string) => <OperationalTag value={status} /> },
+            { title: "Attempt", dataIndex: "attempt", width: 80 },
+            { title: "Bundle", width: 170, render: (_: unknown, item: DetectionRuleDeployment) => <DeploymentBundleCell item={item} /> },
+            { title: "Health Proof", width: 210, render: (_: unknown, item: DetectionRuleDeployment) => <DeploymentHealthProof item={item} /> },
+            { title: "Timing", width: 170, render: (_: unknown, item: DetectionRuleDeployment) => <div className="detection-primary"><strong>{item.resolved_at ? formatDateTime(item.resolved_at) : "In progress"}</strong><small>{item.started_at ? formatDateTime(item.started_at) : "Not started"}</small></div> },
+            { title: "Error", render: (error: string) => error ? <span className="detection-error">{error}</span> : "-" },
           ]}
         />
       ) : null}
     </AppModal>
+  );
+}
+
+function DeploymentBundleCell({ item }: { item: DetectionRuleDeployment }) {
+  const observed = item.rollback_observed_bundle_hash || item.observed_bundle_hash;
+  return (
+    <div className="detection-primary">
+      <strong><code>{shortHash(item.target_bundle_hash)}</code></strong>
+      <small>Observed {observed ? shortHash(observed) : "pending"}</small>
+    </div>
+  );
+}
+
+function DeploymentHealthProof({ item }: { item: DetectionRuleDeployment }) {
+  const proof = item.rollback_health_snapshot ?? item.health_snapshot;
+  if (!proof) return <span>-</span>;
+  return (
+    <div className="detection-primary">
+      <strong><OperationalTag value={proof.status} /></strong>
+      <small>Seq {proof.sequence} · {formatDateTime(proof.observed_at)}</small>
+      {proof.error ? <small className="detection-error">{proof.error}</small> : null}
+    </div>
   );
 }
 

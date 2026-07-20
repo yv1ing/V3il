@@ -1,0 +1,3653 @@
+{
+  "agent": {
+    "capabilities": {
+      "cde": [
+        "incident.read",
+        "investigation.execute",
+        "deception.engineer",
+        "detection.read",
+        "detection.author",
+        "sandbox.execute"
+      ],
+      "cie": [
+        "incident.read",
+        "investigation.execute",
+        "intelligence.analyze",
+        "detection.read",
+        "detection.author",
+        "sandbox.execute"
+      ],
+      "cir": [
+        "incident.read",
+        "investigation.execute",
+        "risk.report",
+        "detection.read",
+        "sandbox.execute"
+      ],
+      "cso": [
+        "incident.read",
+        "investigation.govern",
+        "report.finalize",
+        "detection.read",
+        "agent.delegate",
+        "report.export"
+      ],
+      "cth": [
+        "incident.read",
+        "investigation.execute",
+        "threat.hunt",
+        "detection.read",
+        "detection.author",
+        "sandbox.execute"
+      ]
+    },
+    "default_code": "cso",
+    "identities": {
+      "cde": {
+        "name": "Ph4ntom",
+        "role": "Deception Defense Engineer"
+      },
+      "cie": {
+        "name": "L1ly",
+        "role": "Cyber Threat Intelligence Engineer"
+      },
+      "cir": {
+        "name": "J4ck",
+        "role": "Security Response Engineer"
+      },
+      "cso": {
+        "name": "V3il",
+        "role": "Chief Security Officer"
+      },
+      "cth": {
+        "name": "H4wk",
+        "role": "Threat Investigation Engineer"
+      }
+    }
+  },
+  "auth": {
+    "access_token_header": "X-V3il-Access-Token"
+  },
+  "contract_version": 3,
+  "enums": {
+    "AgentAttemptStatus": [
+      "running",
+      "succeeded",
+      "failed",
+      "canceled",
+      "interrupted"
+    ],
+    "AgentCancellationMode": [
+      "interrupt",
+      "cancel"
+    ],
+    "AgentClientFrameType": [
+      "ack",
+      "ping"
+    ],
+    "AgentCode": [
+      "cso",
+      "cth",
+      "cde",
+      "cie",
+      "cir"
+    ],
+    "AgentContextItemStatus": [
+      "active",
+      "rewound",
+      "compacted",
+      "cleared"
+    ],
+    "AgentDurableEventType": [
+      "user_message",
+      "run_transition",
+      "attempt_transition",
+      "segment_completed",
+      "tool_call",
+      "tool_result",
+      "tool_recovery",
+      "sandbox_recovery",
+      "delegation",
+      "error"
+    ],
+    "AgentImageDetail": [
+      "auto",
+      "low",
+      "high"
+    ],
+    "AgentImageMediaType": [
+      "image/png",
+      "image/jpeg",
+      "image/webp"
+    ],
+    "AgentInputPartType": [
+      "text",
+      "image"
+    ],
+    "AgentRunStatus": [
+      "queued",
+      "running",
+      "waiting",
+      "succeeded",
+      "failed",
+      "canceled"
+    ],
+    "AgentRunWaitReason": [
+      "sandbox_command",
+      "child_run",
+      "tool_recovery"
+    ],
+    "AgentSegmentKind": [
+      "text",
+      "thinking"
+    ],
+    "AgentSegmentStatus": [
+      "streaming",
+      "completed",
+      "interrupted"
+    ],
+    "AgentServerFrameType": [
+      "hello",
+      "replay",
+      "event",
+      "delta",
+      "rebase_required",
+      "heartbeat",
+      "error"
+    ],
+    "AgentSessionStatus": [
+      "active",
+      "archived"
+    ],
+    "AgentToolInvocationResolution": [
+      "confirm_succeeded",
+      "confirm_not_applied"
+    ],
+    "AgentToolInvocationStatus": [
+      "running",
+      "succeeded",
+      "recovery_required",
+      "not_applied"
+    ],
+    "AgentTriggerKind": [
+      "user_message",
+      "delegation",
+      "sandbox_completion",
+      "child_run_completion",
+      "tool_recovery",
+      "system_event"
+    ],
+    "AnalysisKind": [
+      "intent",
+      "attack_chain",
+      "indicator",
+      "attacker_profile",
+      "risk"
+    ],
+    "AnalysisReviewStatus": [
+      "pending",
+      "accepted",
+      "changes_requested"
+    ],
+    "AttackChainStatus": [
+      "reconstructing",
+      "partial",
+      "complete"
+    ],
+    "AttackStage": [
+      "unknown",
+      "reconnaissance",
+      "resource_development",
+      "initial_access",
+      "execution",
+      "persistence",
+      "privilege_escalation",
+      "defense_evasion",
+      "credential_access",
+      "discovery",
+      "lateral_movement",
+      "collection",
+      "command_and_control",
+      "exfiltration",
+      "impact"
+    ],
+    "AttackerProfileStatus": [
+      "draft",
+      "review",
+      "accepted"
+    ],
+    "AuditActorType": [
+      "system",
+      "user",
+      "agent"
+    ],
+    "AuditEventKind": [
+      "environment",
+      "revision",
+      "correlation",
+      "incident_state",
+      "task_state",
+      "delegation",
+      "evidence",
+      "analysis",
+      "report",
+      "knowledge",
+      "detection"
+    ],
+    "BehaviorClassification": [
+      "expected",
+      "contextual",
+      "suspicious",
+      "malicious"
+    ],
+    "BehaviorDecisionMode": [
+      "live",
+      "replay"
+    ],
+    "BehaviorDirection": [
+      "inbound",
+      "outbound",
+      "internal",
+      "unknown"
+    ],
+    "BehaviorEventCategory": [
+      "network",
+      "process",
+      "command",
+      "file",
+      "authentication",
+      "service",
+      "system"
+    ],
+    "BehaviorEventSource": [
+      "sensor",
+      "service",
+      "control_proxy",
+      "control_plane",
+      "agent",
+      "import"
+    ],
+    "BehaviorOutcome": [
+      "success",
+      "failure",
+      "unknown"
+    ],
+    "BehaviorSignalStatus": [
+      "open",
+      "notified",
+      "closed"
+    ],
+    "CentralRuleOperator": [
+      "eq",
+      "neq",
+      "contains",
+      "prefix",
+      "suffix",
+      "in",
+      "regex",
+      "exists"
+    ],
+    "ContainerFileType": [
+      "file",
+      "directory",
+      "symlink"
+    ],
+    "DeceptionAdaptationMode": [
+      "policy_auto",
+      "manual_approval"
+    ],
+    "DeceptionArtifactKind": [
+      "credential",
+      "token",
+      "file",
+      "url",
+      "service",
+      "other"
+    ],
+    "DeceptionContainerOwnership": [
+      "preselected",
+      "platform_managed"
+    ],
+    "DeceptionEnvironmentStatus": [
+      "draft",
+      "building",
+      "active",
+      "adapting",
+      "paused",
+      "recovery_required",
+      "retired"
+    ],
+    "DeceptionEvaluationStatus": [
+      "pending",
+      "effective",
+      "ineffective",
+      "inconclusive"
+    ],
+    "DeceptionReferenceFileState": [
+      "staged",
+      "copied"
+    ],
+    "DeceptionRevisionKind": [
+      "initial",
+      "adaptive"
+    ],
+    "DeceptionRevisionStatus": [
+      "planned",
+      "pending_approval",
+      "executing",
+      "applied",
+      "rolling_back",
+      "rolled_back",
+      "failed",
+      "recovery_required",
+      "rejected"
+    ],
+    "DeceptionRevisionStepStatus": [
+      "pending",
+      "applying",
+      "applied",
+      "verifying",
+      "verified",
+      "rolling_back",
+      "rolled_back",
+      "failed",
+      "rollback_failed"
+    ],
+    "DeceptionRiskLevel": [
+      "low",
+      "high"
+    ],
+    "DeceptionServiceProtocol": [
+      "tcp",
+      "udp",
+      "http",
+      "https",
+      "ssh",
+      "database",
+      "custom"
+    ],
+    "DetectionRuleChangeAction": [
+      "activate",
+      "replace",
+      "disable",
+      "rollback"
+    ],
+    "DetectionRuleChangeDecision": [
+      "approve",
+      "reject",
+      "request_changes"
+    ],
+    "DetectionRuleChangeStatus": [
+      "pending_approval",
+      "changes_requested",
+      "rejected",
+      "deploying",
+      "rolling_back",
+      "active",
+      "failed",
+      "recovery_required",
+      "superseded"
+    ],
+    "DetectionRuleDeploymentStatus": [
+      "pending",
+      "deploying",
+      "health_check",
+      "active",
+      "rolling_back",
+      "failed",
+      "rolled_back",
+      "rollback_failed"
+    ],
+    "DetectionRuleOrigin": [
+      "builtin",
+      "user",
+      "agent"
+    ],
+    "DetectionRuleScope": [
+      "global",
+      "host",
+      "environment"
+    ],
+    "DetectionRuleType": [
+      "zeek_script",
+      "zeek_signature",
+      "central_rule",
+      "suppression"
+    ],
+    "DetectionRuleVersionStatus": [
+      "draft",
+      "validation_failed",
+      "validated",
+      "retired"
+    ],
+    "DetectionSensorHealthStatus": [
+      "healthy",
+      "degraded"
+    ],
+    "EgressProxyType": [
+      "http",
+      "https",
+      "socks5"
+    ],
+    "EvidenceRelationType": [
+      "supports",
+      "contradicts",
+      "related"
+    ],
+    "IntelligenceReportStatus": [
+      "draft",
+      "review",
+      "final"
+    ],
+    "IntentAssessmentStatus": [
+      "hypothesis",
+      "supported",
+      "refuted"
+    ],
+    "InvestigationReviewDecision": [
+      "accept",
+      "request_changes"
+    ],
+    "InvestigationTaskPriority": [
+      "low",
+      "normal",
+      "high",
+      "urgent"
+    ],
+    "InvestigationTaskStatus": [
+      "queued",
+      "active",
+      "blocked",
+      "review",
+      "completed",
+      "canceled"
+    ],
+    "KnowledgeDocumentStatus": [
+      "pending",
+      "parsing",
+      "analyzing",
+      "processing",
+      "processed",
+      "failed"
+    ],
+    "KnowledgePublicationStatus": [
+      "not_queued",
+      "queued",
+      "published",
+      "failed"
+    ],
+    "ManagedHostSensorStatus": [
+      "unconfigured",
+      "offline",
+      "healthy",
+      "degraded"
+    ],
+    "ObservedWorkloadStatus": [
+      "running",
+      "stopped",
+      "failed"
+    ],
+    "ResourceLifecycleStatus": [
+      "active",
+      "retired"
+    ],
+    "RuntimeContinuationDisposition": [
+      "delivered",
+      "discarded"
+    ],
+    "SandboxAsyncJobResolution": [
+      "confirm_terminated"
+    ],
+    "SandboxAsyncJobStatus": [
+      "queued",
+      "running",
+      "completed",
+      "failed",
+      "canceled",
+      "recovery_required"
+    ],
+    "SandboxContainerEgressMode": [
+      "direct",
+      "proxy",
+      "tor"
+    ],
+    "SandboxContainerProtocol": [
+      "tcp",
+      "udp"
+    ],
+    "SandboxContainerStatus": [
+      "created",
+      "running",
+      "paused",
+      "stopped",
+      "error",
+      "removed"
+    ],
+    "SessionType": [
+      "chat",
+      "incident",
+      "environment"
+    ],
+    "SystemUserRole": [
+      "admin",
+      "user"
+    ],
+    "ThreatConfidence": [
+      "low",
+      "medium",
+      "high",
+      "confirmed"
+    ],
+    "ThreatIncidentAction": [
+      "start-investigation",
+      "start-engagement",
+      "finalize",
+      "close",
+      "reopen"
+    ],
+    "ThreatIncidentStatus": [
+      "open",
+      "investigating",
+      "engaging",
+      "finalizing",
+      "closed"
+    ],
+    "ThreatIndicatorDisposition": [
+      "unknown",
+      "suspicious",
+      "malicious",
+      "benign"
+    ],
+    "ThreatIndicatorType": [
+      "ipv4",
+      "ipv6",
+      "domain",
+      "url",
+      "email",
+      "file_sha256",
+      "username",
+      "user_agent",
+      "certificate",
+      "custom"
+    ],
+    "ThreatSensorCoverageStatus": [
+      "healthy",
+      "degraded",
+      "unknown"
+    ],
+    "ThreatSeverity": [
+      "info",
+      "low",
+      "medium",
+      "high",
+      "critical"
+    ],
+    "ThreatTimelineItemKind": [
+      "behavior_event",
+      "audit_event",
+      "investigation_task",
+      "investigation_evidence",
+      "deception_revision"
+    ]
+  },
+  "field_constraints": {
+    "AgentAckFrame": {
+      "durable_seq": {
+        "minimum": 0
+      }
+    },
+    "AgentConfig": {
+      "base_url": {
+        "minLength": 1
+      },
+      "context_window": {
+        "minimum": 0.0
+      },
+      "model": {
+        "minLength": 1
+      },
+      "name": {
+        "maxLength": 128,
+        "minLength": 1
+      }
+    },
+    "AgentDeltaFrame": {
+      "end_utf16_offset": {
+        "minimum": 0
+      },
+      "start_utf16_offset": {
+        "minimum": 0
+      }
+    },
+    "AgentErrorEvent": {
+      "occurred_at": {
+        "format": "date-time"
+      },
+      "seq": {
+        "minimum": 1.0
+      }
+    },
+    "AgentHeartbeatFrame": {
+      "sent_at": {
+        "format": "date-time"
+      }
+    },
+    "AgentHelloFrame": {
+      "durable_head_seq": {
+        "minimum": 0
+      }
+    },
+    "AgentImageInputPart": {
+      "data": {
+        "maxLength": 5242880,
+        "minLength": 1
+      }
+    },
+    "AgentRebaseRequiredFrame": {
+      "durable_head_seq": {
+        "minimum": 0
+      }
+    },
+    "AgentReplayFrame": {
+      "durable_head_seq": {
+        "minimum": 0
+      }
+    },
+    "AgentRunSchema": {
+      "queued_at": {
+        "format": "date-time"
+      },
+      "trigger_revision": {
+        "minimum": 1.0
+      }
+    },
+    "AgentRuntimeConfig": {
+      "context_budget_model_call_ratio": {
+        "exclusiveMaximum": 1.0,
+        "exclusiveMinimum": 0.0
+      },
+      "context_compression_hard_stop_ratio": {
+        "exclusiveMaximum": 1.0,
+        "exclusiveMinimum": 0.0
+      },
+      "context_compression_min_items": {
+        "minimum": 1.0
+      },
+      "context_compression_preserve_recent_items": {
+        "minimum": 1.0
+      },
+      "context_compression_preserve_recent_ratio": {
+        "exclusiveMaximum": 1.0,
+        "exclusiveMinimum": 0.0
+      },
+      "context_compression_summary_max_tokens": {
+        "minimum": 512.0
+      },
+      "context_compression_target_ratio": {
+        "exclusiveMaximum": 1.0,
+        "exclusiveMinimum": 0.0
+      },
+      "context_compression_trigger_ratio": {
+        "exclusiveMaximum": 1.0,
+        "exclusiveMinimum": 0.0
+      },
+      "main_max_turns": {
+        "minimum": 1.0
+      },
+      "max_concurrent_runs": {
+        "maximum": 64.0,
+        "minimum": 1.0
+      },
+      "max_concurrent_sandbox_jobs": {
+        "maximum": 64.0,
+        "minimum": 1.0
+      },
+      "max_sandbox_commands_per_batch": {
+        "maximum": 8.0,
+        "minimum": 1.0
+      },
+      "model_stream_idle_timeout_seconds": {
+        "minimum": 30.0
+      },
+      "report_retention_seconds": {
+        "minimum": 0.0
+      },
+      "specialist_max_turns": {
+        "minimum": 1.0
+      }
+    },
+    "AgentSegmentSnapshot": {
+      "persisted_utf16_offset": {
+        "minimum": 0
+      }
+    },
+    "AgentSessionSummarySchema": {
+      "created_at": {
+        "format": "date-time"
+      },
+      "event_count": {
+        "minimum": 0.0
+      },
+      "queued_run_count": {
+        "minimum": 0.0
+      },
+      "sandbox_recovery_count": {
+        "minimum": 0.0
+      },
+      "selected_sandbox_generation": {
+        "minimum": 0.0
+      },
+      "tool_recovery_count": {
+        "minimum": 0.0
+      },
+      "updated_at": {
+        "format": "date-time"
+      }
+    },
+    "AgentTextInputPart": {
+      "text": {
+        "maxLength": 20000,
+        "minLength": 1
+      }
+    },
+    "AgentToolInvocationSchema": {
+      "started_at": {
+        "format": "date-time"
+      }
+    },
+    "AssignBehaviorEventsRequest": {
+      "event_ids": {
+        "maxItems": 1000,
+        "minItems": 1
+      }
+    },
+    "AssignBehaviorEventsResponse": {
+      "assigned": {
+        "minimum": 0.0
+      },
+      "existing": {
+        "minimum": 0.0
+      }
+    },
+    "AttackChainSchema": {
+      "created_at": {
+        "format": "date-time"
+      }
+    },
+    "AttackChainStepSchema": {
+      "description": {
+        "maxLength": 8000,
+        "minLength": 1
+      },
+      "ended_at": {
+        "format": "date-time"
+      },
+      "evidence_ids": {
+        "maxItems": 1000,
+        "minItems": 1
+      },
+      "sequence": {
+        "minimum": 1.0
+      },
+      "source": {
+        "maxLength": 2000
+      },
+      "started_at": {
+        "format": "date-time"
+      },
+      "target": {
+        "maxLength": 2000
+      },
+      "technique_ids": {
+        "maxItems": 100
+      }
+    },
+    "AttackerProfileSchema": {
+      "created_at": {
+        "format": "date-time"
+      }
+    },
+    "AttemptTransitionEvent": {
+      "occurred_at": {
+        "format": "date-time"
+      },
+      "seq": {
+        "minimum": 1.0
+      }
+    },
+    "AuditEventSchema": {
+      "created_at": {
+        "format": "date-time"
+      }
+    },
+    "AuditEventTimelineItem": {
+      "occurred_at": {
+        "format": "date-time"
+      }
+    },
+    "BehaviorCaptureConfig": {
+      "batch_size": {
+        "maximum": 1000.0,
+        "minimum": 1.0
+      },
+      "concurrency": {
+        "maximum": 64.0,
+        "minimum": 1.0
+      },
+      "max_batches_per_poll": {
+        "maximum": 100.0,
+        "minimum": 1.0
+      },
+      "poll_interval_seconds": {
+        "maximum": 60.0,
+        "minimum": 0.2
+      }
+    },
+    "BehaviorDecisionSchema": {
+      "created_at": {
+        "format": "date-time"
+      }
+    },
+    "BehaviorEventSchema": {
+      "action": {
+        "maxLength": 128,
+        "minLength": 1
+      },
+      "command_line": {
+        "maxLength": 16000
+      },
+      "destination_ip": {
+        "maxLength": 64
+      },
+      "event_hash": {
+        "maxLength": 64
+      },
+      "file_path": {
+        "maxLength": 4096
+      },
+      "ingested_at": {
+        "format": "date-time"
+      },
+      "network_session_id": {
+        "maxLength": 128
+      },
+      "observed_at": {
+        "format": "date-time"
+      },
+      "previous_event_hash": {
+        "maxLength": 64
+      },
+      "process_name": {
+        "maxLength": 255
+      },
+      "protocol": {
+        "maxLength": 32
+      },
+      "raw_reference": {
+        "maxLength": 2000
+      },
+      "sensor_bundle_hash": {
+        "maxLength": 64
+      },
+      "sensor_event_hash": {
+        "maxLength": 64
+      },
+      "sensor_previous_hash": {
+        "maxLength": 64
+      },
+      "sequence": {
+        "exclusiveMinimum": 0.0
+      },
+      "service_name": {
+        "maxLength": 255
+      },
+      "source_ip": {
+        "maxLength": 64
+      },
+      "summary": {
+        "maxLength": 4000
+      },
+      "username": {
+        "maxLength": 255
+      }
+    },
+    "BehaviorEventTimelineItem": {
+      "occurred_at": {
+        "format": "date-time"
+      }
+    },
+    "BehaviorSignalSchema": {
+      "created_at": {
+        "format": "date-time"
+      },
+      "first_observed_at": {
+        "format": "date-time"
+      },
+      "last_observed_at": {
+        "format": "date-time"
+      },
+      "updated_at": {
+        "format": "date-time"
+      }
+    },
+    "BlockInvestigationTaskRequest": {
+      "reason": {
+        "maxLength": 4000,
+        "minLength": 1
+      }
+    },
+    "Body_create_route_api_deception_environments_post": {
+      "description": {
+        "maxLength": 4000
+      },
+      "host_id": {
+        "exclusiveMinimum": 0.0
+      },
+      "image_id": {
+        "exclusiveMinimum": 0.0
+      },
+      "name": {
+        "maxLength": 255,
+        "minLength": 1
+      }
+    },
+    "CentralDetectionRuleReplayResult": {
+      "evaluated": {
+        "minimum": 0.0
+      },
+      "matched": {
+        "minimum": 0.0
+      }
+    },
+    "CentralRuleCondition": {
+      "field": {
+        "maxLength": 255,
+        "minLength": 1,
+        "pattern": "^[A-Za-z_][A-Za-z0-9_.]*$"
+      }
+    },
+    "CentralRuleDefinition": {
+      "all": {
+        "maxItems": 32
+      },
+      "any": {
+        "maxItems": 32
+      },
+      "cooldown_seconds": {
+        "maximum": 86400.0,
+        "minimum": 0.0
+      },
+      "correlation_fields": {
+        "maxItems": 8
+      },
+      "distinct_by": {
+        "maxItems": 8
+      },
+      "group_by": {
+        "maxItems": 8
+      },
+      "reason": {
+        "maxLength": 1000,
+        "minLength": 1
+      },
+      "score": {
+        "maximum": 100.0,
+        "minimum": 0.0
+      },
+      "signal_kind": {
+        "maxLength": 128,
+        "minLength": 1
+      },
+      "threshold": {
+        "maximum": 10000.0,
+        "minimum": 1.0
+      },
+      "window_seconds": {
+        "maximum": 86400.0,
+        "minimum": 1.0
+      }
+    },
+    "ConfigureManagedHostSensorRequest": {
+      "capture_interface": {
+        "maxLength": 128,
+        "minLength": 1
+      },
+      "excluded_ports": {
+        "maxItems": 128
+      },
+      "host_id": {
+        "exclusiveMinimum": 0.0
+      },
+      "proxy_token": {
+        "maxLength": 512,
+        "minLength": 16
+      },
+      "proxy_url": {
+        "maxLength": 2000,
+        "minLength": 1
+      },
+      "sensor_id": {
+        "maxLength": 128,
+        "minLength": 1
+      }
+    },
+    "ContainerFileCopyRequest": {
+      "destination": {
+        "maxLength": 4096,
+        "minLength": 1
+      },
+      "sources": {
+        "maxItems": 100,
+        "minItems": 1
+      }
+    },
+    "ContainerFileDeleteRequest": {
+      "paths": {
+        "maxItems": 100,
+        "minItems": 1
+      }
+    },
+    "ContainerFileMkdirRequest": {
+      "path": {
+        "maxLength": 4096,
+        "minLength": 1
+      }
+    },
+    "ContainerFileMoveRequest": {
+      "destination": {
+        "maxLength": 4096,
+        "minLength": 1
+      },
+      "sources": {
+        "maxItems": 100,
+        "minItems": 1
+      }
+    },
+    "ContainerFileWriteRequest": {
+      "content": {
+        "maxLength": 1048576,
+        "minLength": 0
+      },
+      "path": {
+        "maxLength": 4096,
+        "minLength": 1
+      }
+    },
+    "CreateAgentSessionTurnRequest": {
+      "content": {
+        "maxItems": 8,
+        "minItems": 1
+      }
+    },
+    "CreateAttackChainRequest": {
+      "evidence_ids": {
+        "maxItems": 1000,
+        "minItems": 1
+      },
+      "gaps": {
+        "maxItems": 100
+      },
+      "steps": {
+        "maxItems": 200,
+        "minItems": 1
+      },
+      "summary": {
+        "maxLength": 12000,
+        "minLength": 1
+      }
+    },
+    "CreateAttackerProfileRequest": {
+      "attribution_limits": {
+        "maxItems": 100,
+        "minItems": 1
+      },
+      "capabilities": {
+        "maxItems": 100
+      },
+      "evidence_ids": {
+        "maxItems": 1000,
+        "minItems": 1
+      },
+      "identity_hypotheses": {
+        "maxItems": 100
+      },
+      "infrastructure": {
+        "maxItems": 100
+      },
+      "objectives": {
+        "maxItems": 100
+      },
+      "operational_patterns": {
+        "maxItems": 100
+      },
+      "skill_level": {
+        "maxLength": 255
+      },
+      "summary": {
+        "maxLength": 12000,
+        "minLength": 1
+      },
+      "tools": {
+        "maxItems": 100
+      }
+    },
+    "CreateDeceptionArtifactRequest": {
+      "description": {
+        "maxLength": 4000
+      },
+      "fingerprint": {
+        "maxLength": 512,
+        "minLength": 1
+      },
+      "locator": {
+        "maxLength": 4096,
+        "minLength": 1
+      },
+      "name": {
+        "maxLength": 255,
+        "minLength": 1
+      },
+      "revision_id": {
+        "exclusiveMinimum": 0.0
+      }
+    },
+    "CreateDetectionRuleRequest": {
+      "content": {
+        "maxLength": 256000,
+        "minLength": 1
+      },
+      "description": {
+        "maxLength": 4000
+      },
+      "name": {
+        "maxLength": 255,
+        "minLength": 1
+      }
+    },
+    "CreateDetectionRuleVersionRequest": {
+      "content": {
+        "maxLength": 256000,
+        "minLength": 1
+      }
+    },
+    "CreateEgressProxyRequest": {
+      "proxy_account": {
+        "maxLength": 255
+      },
+      "proxy_host": {
+        "maxLength": 255,
+        "minLength": 1
+      },
+      "proxy_password": {
+        "maxLength": 512
+      },
+      "proxy_port": {
+        "maximum": 65535.0,
+        "minimum": 1.0
+      }
+    },
+    "CreateIntelligenceReportRequest": {
+      "analysis_ids": {
+        "maxItems": 1000,
+        "minItems": 1
+      },
+      "behavior_summary": {
+        "maxLength": 16000,
+        "minLength": 1
+      },
+      "conclusion": {
+        "maxLength": 16000,
+        "minLength": 1
+      },
+      "deception_summary": {
+        "maxLength": 16000
+      },
+      "executive_summary": {
+        "maxLength": 16000,
+        "minLength": 1
+      },
+      "markdown": {
+        "maxLength": 200000,
+        "minLength": 1
+      },
+      "title": {
+        "maxLength": 255,
+        "minLength": 1
+      }
+    },
+    "CreateIntentAssessmentRequest": {
+      "evidence_ids": {
+        "maxItems": 1000,
+        "minItems": 1
+      },
+      "intent": {
+        "maxLength": 4000,
+        "minLength": 1
+      },
+      "predicted_next_actions": {
+        "maxItems": 100
+      },
+      "rationale": {
+        "maxLength": 8000,
+        "minLength": 1
+      },
+      "technique_ids": {
+        "maxItems": 100
+      }
+    },
+    "CreateInvestigationEvidenceRequest": {
+      "analysis": {
+        "maxLength": 12000,
+        "minLength": 1
+      },
+      "behavior_links": {
+        "maxItems": 1000,
+        "minItems": 1
+      },
+      "evidence_relations": {
+        "maxItems": 100
+      },
+      "statement": {
+        "maxLength": 4000,
+        "minLength": 1
+      }
+    },
+    "CreateInvestigationTaskRequest": {
+      "behavior_event_ids": {
+        "maxItems": 1000,
+        "minItems": 1
+      },
+      "completion_criteria": {
+        "maxLength": 4000,
+        "minLength": 1
+      },
+      "dependency_ids": {
+        "maxItems": 100
+      },
+      "objective": {
+        "maxLength": 4000,
+        "minLength": 1
+      },
+      "title": {
+        "maxLength": 255,
+        "minLength": 1
+      }
+    },
+    "CreateManagedHostRequest": {
+      "docker_management_port": {
+        "maximum": 65535.0,
+        "minimum": 1.0
+      },
+      "host_account": {
+        "maxLength": 128,
+        "minLength": 1
+      },
+      "host_password": {
+        "maxLength": 512,
+        "minLength": 1
+      },
+      "ip_address": {
+        "maxLength": 255,
+        "minLength": 1
+      },
+      "ssh_port": {
+        "maximum": 65535.0,
+        "minimum": 1.0
+      }
+    },
+    "CreateObservedWorkloadRequest": {
+      "command": {
+        "maxLength": 16000,
+        "minLength": 1
+      },
+      "environment": {
+        "maxItems": 128
+      },
+      "name": {
+        "maxLength": 128,
+        "minLength": 1
+      },
+      "working_directory": {
+        "maxLength": 4096,
+        "minLength": 1
+      }
+    },
+    "CreateRiskAssessmentRequest": {
+      "defense_improvements": {
+        "maxItems": 100
+      },
+      "evidence_ids": {
+        "maxItems": 1000,
+        "minItems": 1
+      },
+      "rationale": {
+        "maxLength": 8000,
+        "minLength": 1
+      },
+      "residual_risk": {
+        "maxLength": 8000
+      },
+      "response_recommendations": {
+        "maxItems": 100
+      },
+      "risk_score": {
+        "maximum": 100.0,
+        "minimum": 0.0
+      },
+      "stop_conditions": {
+        "maxItems": 100
+      }
+    },
+    "CreateSandboxContainerRequest": {
+      "host_id": {
+        "exclusiveMinimum": 0.0
+      },
+      "image_id": {
+        "exclusiveMinimum": 0.0
+      },
+      "port_mappings": {
+        "maxItems": 32
+      }
+    },
+    "CreateSandboxImageRequest": {
+      "control_proxy_port": {
+        "maximum": 65535.0,
+        "minimum": 1.0
+      },
+      "image_name": {
+        "maxLength": 255,
+        "minLength": 1
+      }
+    },
+    "CreateSystemUserRequest": {
+      "email": {
+        "maxLength": 255,
+        "minLength": 3
+      },
+      "password": {
+        "maxLength": 128,
+        "minLength": 1
+      },
+      "username": {
+        "maxLength": 64,
+        "minLength": 1
+      }
+    },
+    "CreateThreatIndicatorRequest": {
+      "context": {
+        "maxLength": 8000
+      },
+      "evidence_ids": {
+        "maxItems": 1000,
+        "minItems": 1
+      },
+      "first_observed_at": {
+        "format": "date-time"
+      },
+      "last_observed_at": {
+        "format": "date-time"
+      },
+      "value": {
+        "maxLength": 4000,
+        "minLength": 1
+      }
+    },
+    "DeceptionArtifactSchema": {
+      "created_at": {
+        "format": "date-time"
+      }
+    },
+    "DeceptionContainerExecutionState": {
+      "recorded_at": {
+        "format": "date-time"
+      }
+    },
+    "DeceptionContainerPortRequirement": {
+      "container_port": {
+        "maximum": 65535.0,
+        "minimum": 1.0
+      }
+    },
+    "DeceptionContainerSpec": {
+      "host_id": {
+        "exclusiveMinimum": 0.0
+      },
+      "image_id": {
+        "exclusiveMinimum": 0.0
+      },
+      "port_mappings": {
+        "maxItems": 32
+      },
+      "port_requirements": {
+        "maxItems": 32
+      }
+    },
+    "DeceptionEnvironmentSchema": {
+      "created_at": {
+        "format": "date-time"
+      },
+      "updated_at": {
+        "format": "date-time"
+      }
+    },
+    "DeceptionReferenceBundleSchema": {
+      "environment_id": {
+        "exclusiveMinimum": 0.0
+      },
+      "files": {
+        "maxItems": 10
+      },
+      "reference_urls": {
+        "maxItems": 10
+      }
+    },
+    "DeceptionReferenceFileSchema": {
+      "container_path": {
+        "maxLength": 4096,
+        "minLength": 1
+      },
+      "filename": {
+        "maxLength": 255,
+        "minLength": 1
+      },
+      "media_type": {
+        "maxLength": 255,
+        "minLength": 1
+      },
+      "sha256": {
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "size": {
+        "minimum": 1.0
+      }
+    },
+    "DeceptionRevisionBaselineSnapshot": {
+      "recorded_at": {
+        "format": "date-time"
+      }
+    },
+    "DeceptionRevisionDecisionRequest": {
+      "reason": {
+        "maxLength": 4000,
+        "minLength": 1
+      }
+    },
+    "DeceptionRevisionExecutionCheckpoint": {
+      "recorded_at": {
+        "format": "date-time"
+      }
+    },
+    "DeceptionRevisionParameter": {
+      "name": {
+        "maxLength": 255,
+        "minLength": 1
+      },
+      "value_json": {
+        "maxLength": 16000
+      }
+    },
+    "DeceptionRevisionSchema": {
+      "created_at": {
+        "format": "date-time"
+      },
+      "observation_window_seconds": {
+        "maximum": 604800.0,
+        "minimum": 60.0
+      },
+      "version": {
+        "minimum": 1.0
+      }
+    },
+    "DeceptionRevisionStepPlan": {
+      "apply_command": {
+        "maxLength": 16000,
+        "minLength": 1
+      },
+      "expected_effect": {
+        "maxLength": 4000,
+        "minLength": 1
+      },
+      "kind": {
+        "maxLength": 64,
+        "minLength": 1
+      },
+      "parameters": {
+        "maxItems": 128
+      },
+      "rollback_command": {
+        "maxLength": 16000,
+        "minLength": 1
+      },
+      "target": {
+        "maxLength": 1000,
+        "minLength": 1
+      },
+      "timeout_seconds": {
+        "maximum": 300.0,
+        "minimum": 1.0
+      },
+      "verify_command": {
+        "maxLength": 16000,
+        "minLength": 1
+      }
+    },
+    "DeceptionRevisionStepSchema": {
+      "apply_command": {
+        "maxLength": 16000,
+        "minLength": 1
+      },
+      "expected_effect": {
+        "maxLength": 4000,
+        "minLength": 1
+      },
+      "kind": {
+        "maxLength": 64,
+        "minLength": 1
+      },
+      "parameters": {
+        "maxItems": 128
+      },
+      "rollback_command": {
+        "maxLength": 16000,
+        "minLength": 1
+      },
+      "sequence": {
+        "minimum": 1.0
+      },
+      "target": {
+        "maxLength": 1000,
+        "minLength": 1
+      },
+      "timeout_seconds": {
+        "maximum": 300.0,
+        "minimum": 1.0
+      },
+      "verify_command": {
+        "maxLength": 16000,
+        "minLength": 1
+      }
+    },
+    "DeceptionRevisionTimelineItem": {
+      "occurred_at": {
+        "format": "date-time"
+      }
+    },
+    "DeceptionServiceSpec": {
+      "name": {
+        "maxLength": 128,
+        "minLength": 1
+      },
+      "persona": {
+        "maxLength": 2000
+      },
+      "port": {
+        "maximum": 65535.0,
+        "minimum": 1.0
+      }
+    },
+    "DecideDetectionRuleChangeRequest": {
+      "reason": {
+        "maxLength": 4000,
+        "minLength": 1
+      }
+    },
+    "DelegationEvent": {
+      "occurred_at": {
+        "format": "date-time"
+      },
+      "seq": {
+        "minimum": 1.0
+      }
+    },
+    "DetectionReplayClassificationCount": {
+      "count": {
+        "minimum": 0.0
+      }
+    },
+    "DetectionRuleChangeRequestSchema": {
+      "created_at": {
+        "format": "date-time"
+      }
+    },
+    "DetectionRuleSchema": {
+      "created_at": {
+        "format": "date-time"
+      },
+      "updated_at": {
+        "format": "date-time"
+      }
+    },
+    "DetectionRuleVersionSchema": {
+      "created_at": {
+        "format": "date-time"
+      }
+    },
+    "DetectionSensorHealthSnapshot": {
+      "observed_at": {
+        "format": "date-time"
+      },
+      "sequence": {
+        "minimum": 0.0
+      }
+    },
+    "EgressProxySchema": {
+      "created_at": {
+        "format": "date-time"
+      },
+      "updated_at": {
+        "format": "date-time"
+      }
+    },
+    "EvaluateDeceptionRevisionRequest": {
+      "summary": {
+        "maxLength": 12000,
+        "minLength": 1
+      }
+    },
+    "EvidenceBehaviorLinkSchema": {
+      "linked_at": {
+        "format": "date-time"
+      }
+    },
+    "EvidenceRelationSchema": {
+      "linked_at": {
+        "format": "date-time"
+      }
+    },
+    "ImportBehaviorEventBatchRequest": {
+      "events": {
+        "maxItems": 1000,
+        "minItems": 1
+      },
+      "sensor_id": {
+        "maxLength": 128,
+        "minLength": 1
+      }
+    },
+    "ImportedBehaviorEvent": {
+      "action": {
+        "maxLength": 128,
+        "minLength": 1
+      },
+      "command_line": {
+        "maxLength": 16000
+      },
+      "destination_ip": {
+        "maxLength": 64
+      },
+      "file_path": {
+        "maxLength": 4096
+      },
+      "network_session_id": {
+        "maxLength": 128
+      },
+      "observed_at": {
+        "format": "date-time"
+      },
+      "process_name": {
+        "maxLength": 255
+      },
+      "protocol": {
+        "maxLength": 32
+      },
+      "sensor_bundle_hash": {
+        "maxLength": 64
+      },
+      "sequence": {
+        "exclusiveMinimum": 0.0
+      },
+      "service_name": {
+        "maxLength": 255
+      },
+      "source_ip": {
+        "maxLength": 64
+      },
+      "summary": {
+        "maxLength": 4000
+      },
+      "username": {
+        "maxLength": 255
+      }
+    },
+    "IngestBehaviorEventBatchResponse": {
+      "accepted": {
+        "minimum": 0.0
+      },
+      "duplicates": {
+        "minimum": 0.0
+      },
+      "last_sequence": {
+        "minimum": 0.0
+      }
+    },
+    "IntelligenceReportEvidenceManifest": {
+      "covered_event_count": {
+        "minimum": 0.0
+      },
+      "material_event_count": {
+        "minimum": 0.0
+      }
+    },
+    "IntelligenceReportSchema": {
+      "created_at": {
+        "format": "date-time"
+      }
+    },
+    "IntentAssessmentSchema": {
+      "created_at": {
+        "format": "date-time"
+      }
+    },
+    "InvestigationEvidenceSchema": {
+      "created_at": {
+        "format": "date-time"
+      }
+    },
+    "InvestigationEvidenceTimelineItem": {
+      "occurred_at": {
+        "format": "date-time"
+      }
+    },
+    "InvestigationTaskSchema": {
+      "created_at": {
+        "format": "date-time"
+      },
+      "updated_at": {
+        "format": "date-time"
+      }
+    },
+    "InvestigationTaskTimelineItem": {
+      "occurred_at": {
+        "format": "date-time"
+      }
+    },
+    "KnowledgeDocumentDetailSchema": {
+      "chunks_count": {
+        "minimum": 0.0
+      },
+      "content_length": {
+        "minimum": 0.0
+      },
+      "created_at": {
+        "format": "date-time"
+      },
+      "updated_at": {
+        "format": "date-time"
+      }
+    },
+    "KnowledgeDocumentSchema": {
+      "chunks_count": {
+        "minimum": 0.0
+      },
+      "content_length": {
+        "minimum": 0.0
+      },
+      "created_at": {
+        "format": "date-time"
+      },
+      "updated_at": {
+        "format": "date-time"
+      }
+    },
+    "KnowledgeDocumentStatusCounts": {
+      "analyzing": {
+        "minimum": 0.0
+      },
+      "failed": {
+        "minimum": 0.0
+      },
+      "parsing": {
+        "minimum": 0.0
+      },
+      "pending": {
+        "minimum": 0.0
+      },
+      "processed": {
+        "minimum": 0.0
+      },
+      "processing": {
+        "minimum": 0.0
+      },
+      "total": {
+        "minimum": 0.0
+      }
+    },
+    "KnowledgeVectorDetailSchema": {
+      "chunk_index": {
+        "minimum": 0.0
+      },
+      "created_at": {
+        "format": "date-time"
+      },
+      "dimension": {
+        "minimum": 1.0
+      },
+      "tokens": {
+        "minimum": 0.0
+      },
+      "updated_at": {
+        "format": "date-time"
+      }
+    },
+    "KnowledgeVectorSchema": {
+      "chunk_index": {
+        "minimum": 0.0
+      },
+      "created_at": {
+        "format": "date-time"
+      },
+      "dimension": {
+        "minimum": 1.0
+      },
+      "tokens": {
+        "minimum": 0.0
+      },
+      "updated_at": {
+        "format": "date-time"
+      }
+    },
+    "LightRAGConfig": {
+      "chunk_matches": {
+        "maximum": 50.0,
+        "minimum": 1.0
+      },
+      "embedding_api": {
+        "minLength": 1
+      },
+      "embedding_dim": {
+        "maximum": 16000.0,
+        "minimum": 1.0
+      },
+      "embedding_model": {
+        "minLength": 1
+      },
+      "graph_matches": {
+        "maximum": 50.0,
+        "minimum": 1.0
+      },
+      "llm_api": {
+        "minLength": 1
+      },
+      "llm_model": {
+        "minLength": 1
+      }
+    },
+    "ListAgentSessionsResponse": {
+      "page": {
+        "minimum": 1.0
+      },
+      "size": {
+        "minimum": 1.0
+      },
+      "total": {
+        "minimum": 0.0
+      }
+    },
+    "ManagedHostImageSchema": {
+      "image_size": {
+        "format": "int64"
+      }
+    },
+    "ManagedHostSchema": {
+      "created_at": {
+        "format": "date-time"
+      },
+      "updated_at": {
+        "format": "date-time"
+      }
+    },
+    "ManagedHostSensorSchema": {
+      "created_at": {
+        "format": "date-time"
+      },
+      "updated_at": {
+        "format": "date-time"
+      }
+    },
+    "MatchedDetectionRuleVersion": {
+      "score": {
+        "maximum": 100.0,
+        "minimum": 0.0
+      }
+    },
+    "ObservedWorkloadEnvironmentVariable": {
+      "name": {
+        "maxLength": 255,
+        "minLength": 1
+      },
+      "value": {
+        "maxLength": 8000
+      }
+    },
+    "ObservedWorkloadSchema": {
+      "process_id": {
+        "minimum": 1.0
+      },
+      "started_at": {
+        "format": "date-time"
+      }
+    },
+    "PlanDeceptionRevisionRequest": {
+      "approval_reason": {
+        "maxLength": 4000
+      },
+      "engagement_goal": {
+        "maxLength": 4000
+      },
+      "engagement_hypothesis": {
+        "maxLength": 8000
+      },
+      "observation_window_seconds": {
+        "maximum": 604800.0,
+        "minimum": 60.0
+      },
+      "rationale": {
+        "maxLength": 8000,
+        "minLength": 1
+      },
+      "steps": {
+        "maxItems": 64,
+        "minItems": 1
+      },
+      "success_criteria": {
+        "maxItems": 100
+      },
+      "target_persona": {
+        "maxLength": 8000,
+        "minLength": 1
+      },
+      "target_services": {
+        "maxItems": 64,
+        "minItems": 1
+      },
+      "trigger_event_ids": {
+        "maxItems": 1000
+      },
+      "trigger_signal_ids": {
+        "maxItems": 1000
+      }
+    },
+    "PullManagedHostImagesRequest": {
+      "image_names": {
+        "maxItems": 100,
+        "minItems": 1
+      }
+    },
+    "QueryAttackChainsResponse": {
+      "page": {
+        "minimum": 1.0
+      },
+      "size": {
+        "minimum": 1.0
+      },
+      "total": {
+        "minimum": 0.0
+      }
+    },
+    "QueryAttackerProfilesResponse": {
+      "page": {
+        "minimum": 1.0
+      },
+      "size": {
+        "minimum": 1.0
+      },
+      "total": {
+        "minimum": 0.0
+      }
+    },
+    "QueryAuditEventsResponse": {
+      "page": {
+        "minimum": 1.0
+      },
+      "size": {
+        "minimum": 1.0
+      },
+      "total": {
+        "minimum": 0.0
+      }
+    },
+    "QueryBehaviorDecisionsResponse": {
+      "page": {
+        "minimum": 1.0
+      },
+      "size": {
+        "minimum": 1.0
+      },
+      "total": {
+        "minimum": 0.0
+      }
+    },
+    "QueryBehaviorEventsResponse": {
+      "page": {
+        "minimum": 1.0
+      },
+      "size": {
+        "minimum": 1.0
+      },
+      "total": {
+        "minimum": 0.0
+      }
+    },
+    "QueryBehaviorSignalsResponse": {
+      "page": {
+        "minimum": 1.0
+      },
+      "size": {
+        "minimum": 1.0
+      },
+      "total": {
+        "minimum": 0.0
+      }
+    },
+    "QueryDeceptionArtifactsResponse": {
+      "page": {
+        "minimum": 1.0
+      },
+      "size": {
+        "minimum": 1.0
+      },
+      "total": {
+        "minimum": 0.0
+      }
+    },
+    "QueryDeceptionEnvironmentsResponse": {
+      "page": {
+        "minimum": 1.0
+      },
+      "size": {
+        "minimum": 1.0
+      },
+      "total": {
+        "minimum": 0.0
+      }
+    },
+    "QueryDeceptionRevisionsResponse": {
+      "page": {
+        "minimum": 1.0
+      },
+      "size": {
+        "minimum": 1.0
+      },
+      "total": {
+        "minimum": 0.0
+      }
+    },
+    "QueryDetectionRulesResponse": {
+      "page": {
+        "minimum": 1.0
+      },
+      "size": {
+        "minimum": 1.0
+      },
+      "total": {
+        "minimum": 0.0
+      }
+    },
+    "QueryEgressProxiesResponse": {
+      "page": {
+        "minimum": 1.0
+      },
+      "size": {
+        "minimum": 1.0
+      },
+      "total": {
+        "minimum": 0.0
+      }
+    },
+    "QueryIntelligenceReportsResponse": {
+      "page": {
+        "minimum": 1.0
+      },
+      "size": {
+        "minimum": 1.0
+      },
+      "total": {
+        "minimum": 0.0
+      }
+    },
+    "QueryIntentAssessmentsResponse": {
+      "page": {
+        "minimum": 1.0
+      },
+      "size": {
+        "minimum": 1.0
+      },
+      "total": {
+        "minimum": 0.0
+      }
+    },
+    "QueryInvestigationEvidenceResponse": {
+      "page": {
+        "minimum": 1.0
+      },
+      "size": {
+        "minimum": 1.0
+      },
+      "total": {
+        "minimum": 0.0
+      }
+    },
+    "QueryInvestigationTasksResponse": {
+      "page": {
+        "minimum": 1.0
+      },
+      "size": {
+        "minimum": 1.0
+      },
+      "total": {
+        "minimum": 0.0
+      }
+    },
+    "QueryKnowledgeDocumentsResponse": {
+      "page": {
+        "minimum": 1.0
+      },
+      "size": {
+        "minimum": 1.0
+      },
+      "total": {
+        "minimum": 0.0
+      }
+    },
+    "QueryKnowledgeVectorsResponse": {
+      "page": {
+        "minimum": 1.0
+      },
+      "size": {
+        "minimum": 1.0
+      },
+      "total": {
+        "minimum": 0.0
+      }
+    },
+    "QueryManagedHostSensorsResponse": {
+      "page": {
+        "minimum": 1.0
+      },
+      "size": {
+        "minimum": 1.0
+      },
+      "total": {
+        "minimum": 0.0
+      }
+    },
+    "QueryManagedHostsResponse": {
+      "page": {
+        "minimum": 1.0
+      },
+      "size": {
+        "minimum": 1.0
+      },
+      "total": {
+        "minimum": 0.0
+      }
+    },
+    "QueryRiskAssessmentsResponse": {
+      "page": {
+        "minimum": 1.0
+      },
+      "size": {
+        "minimum": 1.0
+      },
+      "total": {
+        "minimum": 0.0
+      }
+    },
+    "QueryRuleChangesResponse": {
+      "page": {
+        "minimum": 1.0
+      },
+      "size": {
+        "minimum": 1.0
+      },
+      "total": {
+        "minimum": 0.0
+      }
+    },
+    "QueryRuleDeploymentsResponse": {
+      "page": {
+        "minimum": 1.0
+      },
+      "size": {
+        "minimum": 1.0
+      },
+      "total": {
+        "minimum": 0.0
+      }
+    },
+    "QueryRuleVersionsResponse": {
+      "page": {
+        "minimum": 1.0
+      },
+      "size": {
+        "minimum": 1.0
+      },
+      "total": {
+        "minimum": 0.0
+      }
+    },
+    "QuerySandboxContainerHostOptionsResponse": {
+      "page": {
+        "minimum": 1.0
+      },
+      "size": {
+        "minimum": 1.0
+      },
+      "total": {
+        "minimum": 0.0
+      }
+    },
+    "QuerySandboxContainerImageOptionsResponse": {
+      "page": {
+        "minimum": 1.0
+      },
+      "size": {
+        "minimum": 1.0
+      },
+      "total": {
+        "minimum": 0.0
+      }
+    },
+    "QuerySandboxContainersResponse": {
+      "page": {
+        "minimum": 1.0
+      },
+      "size": {
+        "minimum": 1.0
+      },
+      "total": {
+        "minimum": 0.0
+      }
+    },
+    "QuerySandboxImagesResponse": {
+      "page": {
+        "minimum": 1.0
+      },
+      "size": {
+        "minimum": 1.0
+      },
+      "total": {
+        "minimum": 0.0
+      }
+    },
+    "QuerySystemUsersResponse": {
+      "page": {
+        "minimum": 1.0
+      },
+      "size": {
+        "minimum": 1.0
+      },
+      "total": {
+        "minimum": 0.0
+      }
+    },
+    "QueryThreatIncidentsResponse": {
+      "page": {
+        "minimum": 1.0
+      },
+      "size": {
+        "minimum": 1.0
+      },
+      "total": {
+        "minimum": 0.0
+      }
+    },
+    "QueryThreatIndicatorsResponse": {
+      "page": {
+        "minimum": 1.0
+      },
+      "size": {
+        "minimum": 1.0
+      },
+      "total": {
+        "minimum": 0.0
+      }
+    },
+    "RemoveManagedHostImageRequest": {
+      "image_id": {
+        "maxLength": 255,
+        "minLength": 1
+      }
+    },
+    "ReplayDetectionRuleRequest": {
+      "event_ids": {
+        "maxItems": 5000,
+        "minItems": 1
+      }
+    },
+    "ResolveAgentToolInvocationRequest": {
+      "note": {
+        "maxLength": 1000,
+        "minLength": 1
+      }
+    },
+    "ResolveSandboxAsyncJobRequest": {
+      "note": {
+        "maxLength": 1000,
+        "minLength": 1
+      }
+    },
+    "ReviewInvestigationTaskRequest": {
+      "reason": {
+        "maxLength": 4000,
+        "minLength": 1
+      }
+    },
+    "RiskAssessmentSchema": {
+      "created_at": {
+        "format": "date-time"
+      }
+    },
+    "RunTransitionEvent": {
+      "occurred_at": {
+        "format": "date-time"
+      },
+      "seq": {
+        "minimum": 1.0
+      }
+    },
+    "SandboxAsyncJobSnapshot": {
+      "created_at": {
+        "format": "date-time"
+      },
+      "lease_fencing_token": {
+        "minimum": 0.0
+      },
+      "output_bytes": {
+        "minimum": 0.0
+      },
+      "output_lines": {
+        "minimum": 0.0
+      },
+      "sandbox_container_generation": {
+        "exclusiveMinimum": 0.0
+      },
+      "sandbox_container_id": {
+        "exclusiveMinimum": 0.0
+      },
+      "timeout_seconds": {
+        "exclusiveMinimum": 0.0
+      },
+      "updated_at": {
+        "format": "date-time"
+      }
+    },
+    "SandboxContainerPortMapping": {
+      "container_port": {
+        "maximum": 65535.0,
+        "minimum": 1.0
+      },
+      "host_port": {
+        "maximum": 65535.0,
+        "minimum": 1.0
+      }
+    },
+    "SandboxContainerSchema": {
+      "created_at": {
+        "format": "date-time"
+      },
+      "generation": {
+        "minimum": 0.0
+      },
+      "updated_at": {
+        "format": "date-time"
+      }
+    },
+    "SandboxImageSchema": {
+      "created_at": {
+        "format": "date-time"
+      },
+      "updated_at": {
+        "format": "date-time"
+      }
+    },
+    "SandboxRecoveryEvent": {
+      "occurred_at": {
+        "format": "date-time"
+      },
+      "seq": {
+        "minimum": 1.0
+      }
+    },
+    "SegmentCompletedEvent": {
+      "occurred_at": {
+        "format": "date-time"
+      },
+      "seq": {
+        "minimum": 1.0
+      }
+    },
+    "SubmitAgentSessionTurnRequest": {
+      "content": {
+        "maxItems": 8,
+        "minItems": 1
+      }
+    },
+    "SubmitDetectionRuleChangeRequest": {
+      "reason": {
+        "maxLength": 4000,
+        "minLength": 1
+      },
+      "target_sensor_ids": {
+        "maxItems": 1000,
+        "minItems": 1
+      }
+    },
+    "SubmitInvestigationTaskRequest": {
+      "result_summary": {
+        "maxLength": 8000,
+        "minLength": 1
+      }
+    },
+    "SuppressionRuleDefinition": {
+      "all": {
+        "maxItems": 32,
+        "minItems": 1
+      },
+      "reason": {
+        "maxLength": 1000,
+        "minLength": 1
+      },
+      "target_rule_ids": {
+        "maxItems": 100,
+        "minItems": 1
+      }
+    },
+    "SystemUserLoginRequest": {
+      "email": {
+        "maxLength": 255,
+        "minLength": 1
+      },
+      "password": {
+        "maxLength": 128,
+        "minLength": 1
+      }
+    },
+    "SystemUserSchema": {
+      "created_at": {
+        "format": "date-time"
+      },
+      "updated_at": {
+        "format": "date-time"
+      }
+    },
+    "ThreatAutomationConfig": {
+      "correlation_window_seconds": {
+        "maximum": 86400.0,
+        "minimum": 60.0
+      },
+      "notification_event_limit": {
+        "maximum": 1000.0,
+        "minimum": 1.0
+      }
+    },
+    "ThreatIncidentSchema": {
+      "created_at": {
+        "format": "date-time"
+      },
+      "first_observed_at": {
+        "format": "date-time"
+      },
+      "last_observed_at": {
+        "format": "date-time"
+      },
+      "risk_score": {
+        "maximum": 100.0,
+        "minimum": 0.0
+      },
+      "updated_at": {
+        "format": "date-time"
+      }
+    },
+    "ThreatIndicatorSchema": {
+      "created_at": {
+        "format": "date-time"
+      },
+      "first_observed_at": {
+        "format": "date-time"
+      },
+      "last_observed_at": {
+        "format": "date-time"
+      }
+    },
+    "ThreatSensorCoverageSchema": {
+      "updated_at": {
+        "format": "date-time"
+      }
+    },
+    "ThreatTimelineCursor": {
+      "occurred_at": {
+        "format": "date-time"
+      }
+    },
+    "ToolCallEvent": {
+      "occurred_at": {
+        "format": "date-time"
+      },
+      "seq": {
+        "minimum": 1.0
+      }
+    },
+    "ToolRecoveryEvent": {
+      "occurred_at": {
+        "format": "date-time"
+      },
+      "seq": {
+        "minimum": 1.0
+      }
+    },
+    "ToolResultEvent": {
+      "occurred_at": {
+        "format": "date-time"
+      },
+      "seq": {
+        "minimum": 1.0
+      }
+    },
+    "TransitionThreatIncidentRequest": {
+      "reason": {
+        "maxLength": 4000,
+        "minLength": 1
+      }
+    },
+    "UpdateAgentConfigRequest": {
+      "base_url": {
+        "minLength": 1
+      },
+      "context_window": {
+        "minimum": 0.0
+      },
+      "model": {
+        "minLength": 1
+      }
+    },
+    "UpdateAgentSessionTitleRequest": {
+      "title": {
+        "maxLength": 80,
+        "minLength": 1
+      }
+    },
+    "UserMessageEvent": {
+      "occurred_at": {
+        "format": "date-time"
+      },
+      "seq": {
+        "minimum": 1.0
+      }
+    }
+  },
+  "field_defaults": {
+    "AgentAckFrame": {
+      "type": "ack"
+    },
+    "AgentConfig": {
+      "api_key": "",
+      "context_window": 1000000,
+      "description": "",
+      "use_responses": false
+    },
+    "AgentContinuationReadyPayload": {
+      "type": "agent.continuation.ready"
+    },
+    "AgentDeltaFrame": {
+      "type": "delta"
+    },
+    "AgentErrorEvent": {
+      "type": "error"
+    },
+    "AgentEventFrame": {
+      "type": "event"
+    },
+    "AgentHeartbeatFrame": {
+      "type": "heartbeat"
+    },
+    "AgentHelloFrame": {
+      "type": "hello"
+    },
+    "AgentImageInputPart": {
+      "detail": "auto",
+      "type": "image"
+    },
+    "AgentInfoSchema": {
+      "description": ""
+    },
+    "AgentPingFrame": {
+      "type": "ping"
+    },
+    "AgentRebaseRequiredFrame": {
+      "type": "rebase_required"
+    },
+    "AgentReplayFrame": {
+      "type": "replay"
+    },
+    "AgentRunCancelPayload": {
+      "type": "agent.run.cancel"
+    },
+    "AgentRunReadyPayload": {
+      "type": "agent.run.ready"
+    },
+    "AgentRunSchema": {
+      "cancel_requested_by": "",
+      "canceled_by": "",
+      "error_code": "",
+      "error_message": "",
+      "result_summary": ""
+    },
+    "AgentRuntimeConfig": {
+      "context_budget_model_call_ratio": 0.8,
+      "context_compression_hard_stop_ratio": 0.98,
+      "context_compression_min_items": 12,
+      "context_compression_preserve_recent_items": 20,
+      "context_compression_preserve_recent_ratio": 0.25,
+      "context_compression_summary_max_tokens": 8000,
+      "context_compression_target_ratio": 0.2,
+      "context_compression_trigger_ratio": 0.9,
+      "main_max_turns": 1000,
+      "max_concurrent_runs": 8,
+      "max_concurrent_sandbox_jobs": 8,
+      "max_sandbox_commands_per_batch": 3,
+      "model_stream_idle_timeout_seconds": 300,
+      "report_retention_seconds": 259200,
+      "specialist_max_turns": 1000
+    },
+    "AgentSessionCancelPayload": {
+      "type": "agent.session.cancel"
+    },
+    "AgentSessionCapabilitiesSchema": {
+      "turn_block_reason": ""
+    },
+    "AgentSessionSummarySchema": {
+      "event_count": 0,
+      "queued_run_count": 0,
+      "sandbox_recovery_count": 0,
+      "selected_sandbox_generation": 0,
+      "tool_recovery_count": 0
+    },
+    "AgentStreamErrorFrame": {
+      "type": "error"
+    },
+    "AgentTextInputPart": {
+      "type": "text"
+    },
+    "AgentToolInvocationSchema": {
+      "error_message": "",
+      "resolution_note": "",
+      "resolved_by": ""
+    },
+    "AttackChainStepSchema": {
+      "source": "",
+      "target": ""
+    },
+    "AttemptTransitionEvent": {
+      "reason": "",
+      "type": "attempt_transition"
+    },
+    "AuditEventTimelineItem": {
+      "kind": "audit_event"
+    },
+    "BehaviorCaptureConfig": {
+      "batch_size": 500,
+      "concurrency": 16,
+      "max_batches_per_poll": 8,
+      "poll_interval_seconds": 1.0
+    },
+    "BehaviorEventSchema": {
+      "command_line": "",
+      "correlation_score": 0,
+      "destination_ip": "",
+      "direction": "unknown",
+      "file_path": "",
+      "incident_link_method": "",
+      "incident_material": false,
+      "materiality_reason": "",
+      "network_session_id": "",
+      "outcome": "unknown",
+      "process_name": "",
+      "protocol": "",
+      "raw_reference": "",
+      "sensor_bundle_hash": "",
+      "sensor_event_hash": "",
+      "sensor_previous_hash": "",
+      "service_name": "",
+      "source": "sensor",
+      "source_ip": "",
+      "summary": "",
+      "username": ""
+    },
+    "BehaviorEventTimelineItem": {
+      "kind": "behavior_event"
+    },
+    "Body_create_route_api_deception_environments_post": {
+      "adaptation_mode": "policy_auto",
+      "description": ""
+    },
+    "Body_upload_container_files_route_api_sandbox_containers__id__files_upload_post": {
+      "overwrite": true,
+      "path": "/"
+    },
+    "CentralDetectionRuleReplayResult": {
+      "kind": "central"
+    },
+    "CentralRuleDefinition": {
+      "cooldown_seconds": 60,
+      "material": true,
+      "threshold": 1,
+      "window_seconds": 60
+    },
+    "CommonResponse": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_AgentSessionSummarySchema_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_AssignBehaviorEventsResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_AttackChainSchema_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_AttackerProfileSchema_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_ContainerFileReadResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_ContainerFileUploadResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_CreateDeceptionEnvironmentResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_CreateDetectionRuleResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_DeceptionEnvironmentSchema_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_DeceptionReferenceBundleSchema_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_DeceptionRevisionSchema_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_DeleteKnowledgeDocumentResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_DetectionRuleChangeRequestSchema_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_DetectionRuleVersionSchema_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_EgressProxySchema_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_IngestBehaviorEventBatchResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_InstanceConfigSchema_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_IntelligenceReportSchema_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_IntentAssessmentSchema_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_InvestigationEvidenceSchema_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_InvestigationTaskSchema_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_KnowledgeDocumentDetailSchema_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_KnowledgeGraphSchema_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_KnowledgeVectorDetailSchema_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_ListContainerFilesResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_ListManagedHostImagesResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_ListObservedWorkloadsResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_ManagedHostSchema_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_ManagedHostSensorSchema_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_ObservedWorkloadSchema_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_PullManagedHostImagesResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_QueryAttackChainsResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_QueryAttackerProfilesResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_QueryAuditEventsResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_QueryBehaviorDecisionsResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_QueryBehaviorEventsResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_QueryBehaviorSignalsResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_QueryDeceptionArtifactsResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_QueryDeceptionEnvironmentsResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_QueryDeceptionRevisionsResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_QueryDetectionRulesResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_QueryEgressProxiesResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_QueryIntelligenceReportsResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_QueryIntentAssessmentsResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_QueryInvestigationEvidenceResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_QueryInvestigationTasksResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_QueryKnowledgeDocumentsResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_QueryKnowledgeVectorsResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_QueryManagedHostSensorsResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_QueryManagedHostsResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_QueryRiskAssessmentsResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_QueryRuleChangesResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_QueryRuleDeploymentsResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_QueryRuleVersionsResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_QuerySandboxContainerHostOptionsResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_QuerySandboxContainerImageOptionsResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_QuerySandboxContainersResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_QuerySandboxImagesResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_QuerySystemUsersResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_QueryThreatIncidentsResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_QueryThreatIndicatorsResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_RemoveSandboxContainerResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_RetireEgressProxyResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_RetireManagedHostResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_RetireSandboxImageResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_RetireSystemUserResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_RiskAssessmentSchema_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_SandboxContainerSchema_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_SandboxImageSchema_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_SystemUserLoginResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_SystemUserSchema_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_TestEgressProxyResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_ThreatIncidentSchema_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_ThreatIncidentWorkspaceSchema_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_ThreatIndicatorSchema_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_ThreatTimelineResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_UpdateInstanceConfigResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CommonResponse_UploadKnowledgeDocumentsResponse_": {
+      "code": 200,
+      "message": "success"
+    },
+    "CreateAttackerProfileRequest": {
+      "skill_level": ""
+    },
+    "CreateDeceptionArtifactRequest": {
+      "description": ""
+    },
+    "CreateDetectionRuleRequest": {
+      "description": ""
+    },
+    "CreateEgressProxyRequest": {
+      "proxy_account": "",
+      "proxy_password": "",
+      "proxy_type": "http"
+    },
+    "CreateIntelligenceReportRequest": {
+      "deception_summary": ""
+    },
+    "CreateInvestigationTaskRequest": {
+      "priority": "normal"
+    },
+    "CreateManagedHostRequest": {
+      "docker_client_ca_cert": "",
+      "docker_client_cert": "",
+      "docker_client_key": "",
+      "docker_management_port": 2375,
+      "docker_tls_enabled": false,
+      "ssh_port": 22
+    },
+    "CreateObservedWorkloadRequest": {
+      "working_directory": "/opt/deception"
+    },
+    "CreateRiskAssessmentRequest": {
+      "residual_risk": ""
+    },
+    "CreateSandboxContainerRequest": {
+      "egress_mode": "direct"
+    },
+    "CreateSandboxImageRequest": {
+      "control_proxy_port": 8000,
+      "supports_tor": false
+    },
+    "CreateSystemUserRequest": {
+      "role": "user"
+    },
+    "CreateThreatIndicatorRequest": {
+      "context": ""
+    },
+    "DeceptionContainerPortRequirement": {
+      "protocol": "tcp"
+    },
+    "DeceptionReferenceFileSchema": {
+      "state": "staged"
+    },
+    "DeceptionRevisionStepPlan": {
+      "timeout_seconds": 60
+    },
+    "DeceptionRevisionStepSchema": {
+      "timeout_seconds": 60
+    },
+    "DeceptionRevisionTimelineItem": {
+      "kind": "deception_revision"
+    },
+    "DeceptionServiceSpec": {
+      "exposed": true,
+      "persona": ""
+    },
+    "DelegationEvent": {
+      "summary": "",
+      "type": "delegation"
+    },
+    "DetectionRuleValidationResult": {
+      "validator": "v3il-static-detection-v1"
+    },
+    "ImportedBehaviorEvent": {
+      "command_line": "",
+      "destination_ip": "",
+      "direction": "unknown",
+      "file_path": "",
+      "network_session_id": "",
+      "outcome": "unknown",
+      "process_name": "",
+      "protocol": "",
+      "sensor_bundle_hash": "",
+      "service_name": "",
+      "source_ip": "",
+      "summary": "",
+      "username": ""
+    },
+    "IntelligenceReportEvidenceManifest": {
+      "covered_event_count": 0,
+      "material_event_count": 0
+    },
+    "InvestigationEvidenceTimelineItem": {
+      "kind": "investigation_evidence"
+    },
+    "InvestigationTaskTimelineItem": {
+      "kind": "investigation_task"
+    },
+    "KnowledgeGraphNodeSchema": {
+      "matched": false
+    },
+    "KnowledgePublicationReadyPayload": {
+      "type": "knowledge.publication.ready"
+    },
+    "LightRAGConfig": {
+      "chunk_matches": 10,
+      "embedding_api": "https://api.openai.com/v1",
+      "embedding_dim": 1536,
+      "embedding_key": "",
+      "embedding_model": "text-embedding-3-small",
+      "graph_matches": 5,
+      "llm_api": "https://api.openai.com/v1",
+      "llm_key": "",
+      "llm_model": "gpt-5"
+    },
+    "ListAgentEventsResponse": {
+      "has_more": false
+    },
+    "ManagedHostImageSchema": {
+      "image_hash": "",
+      "image_id": "",
+      "image_size": 0
+    },
+    "ObservedWorkloadSchema": {
+      "error": ""
+    },
+    "PlanDeceptionRevisionRequest": {
+      "approval_reason": "",
+      "engagement_goal": "",
+      "engagement_hypothesis": "",
+      "observation_window_seconds": 3600,
+      "risk_level": "low"
+    },
+    "ProblemDetails": {
+      "detail": "",
+      "error_code": "",
+      "instance": "",
+      "type": "about:blank"
+    },
+    "PullManagedHostImageResultSchema": {
+      "message": ""
+    },
+    "RemoveManagedHostImageRequest": {
+      "force": false
+    },
+    "RunTransitionEvent": {
+      "reason": "",
+      "type": "run_transition"
+    },
+    "SandboxAsyncJobSnapshot": {
+      "cancel_requested_by": "",
+      "error": "",
+      "lease_fencing_token": 0,
+      "output_bytes": 0,
+      "output_lines": 0,
+      "recovery_resolution_note": "",
+      "recovery_resolved_by": "",
+      "runtime_owner_id": ""
+    },
+    "SandboxContainerPortMapping": {
+      "protocol": "tcp"
+    },
+    "SandboxRecoveryEvent": {
+      "type": "sandbox_recovery"
+    },
+    "SegmentCompletedEvent": {
+      "type": "segment_completed"
+    },
+    "SensorDetectionRuleReplayResult": {
+      "evaluated": 0,
+      "kind": "sensor_validation_required",
+      "matched": 0
+    },
+    "ThreatAutomationConfig": {
+      "correlation_window_seconds": 1800,
+      "enabled": true,
+      "notification_event_limit": 200
+    },
+    "ThreatSensorCoverageSchema": {
+      "summary": ""
+    },
+    "ThreatTimelineResponse": {
+      "has_more": false
+    },
+    "ThreatWorkspaceCounts": {
+      "assigned_event_count": 0,
+      "covered_event_count": 0,
+      "evidence_count": 0,
+      "indicators_count": 0,
+      "scoped_event_count": 0
+    },
+    "ToolCallEvent": {
+      "type": "tool_call"
+    },
+    "ToolRecoveryEvent": {
+      "type": "tool_recovery"
+    },
+    "ToolResultEvent": {
+      "is_error": false,
+      "output": "",
+      "type": "tool_result"
+    },
+    "UpdateSandboxContainerEgressRequest": {
+      "egress_mode": "direct"
+    },
+    "UserMessageEvent": {
+      "type": "user_message"
+    }
+  },
+  "knowledge": {
+    "accepted_suffixes": [
+      ".md",
+      ".pdf"
+    ],
+    "document_accept": ".md,.pdf",
+    "inflight_statuses": [
+      "pending",
+      "parsing",
+      "analyzing",
+      "processing"
+    ]
+  },
+  "limits": {
+    "agent_input": {
+      "maximum_image_bytes": 3932160,
+      "maximum_images": 4,
+      "maximum_text_characters": 20000,
+      "maximum_total_image_bytes": 6291456
+    },
+    "behavior_ingestion": {
+      "maximum_attribute_depth": 8,
+      "maximum_attribute_items": 256,
+      "maximum_attribute_string_length": 4000,
+      "maximum_attributes_bytes": 16384,
+      "maximum_batch_bytes": 8388608
+    },
+    "deception_references": {
+      "maximum_file_bytes": 10485760,
+      "maximum_files": 10,
+      "maximum_total_bytes": 52428800,
+      "maximum_url_length": 2000,
+      "maximum_urls": 10
+    },
+    "knowledge": {
+      "graph_expansion_batch_size": 100,
+      "graph_maximum_nodes": 1000,
+      "maximum_batch_size": 50,
+      "maximum_document_bytes": 26214400,
+      "maximum_filename_bytes": 255
+    },
+    "pagination": {
+      "default_page_size": 10,
+      "maximum_page_size": 100
+    }
+  },
+  "status_transitions": {
+    "agent_attempt": {
+      "canceled": [],
+      "failed": [],
+      "interrupted": [],
+      "running": [
+        "succeeded",
+        "failed",
+        "canceled",
+        "interrupted"
+      ],
+      "succeeded": []
+    },
+    "agent_context_item": {
+      "active": [
+        "rewound",
+        "compacted",
+        "cleared"
+      ],
+      "cleared": [],
+      "compacted": [],
+      "rewound": [
+        "active"
+      ]
+    },
+    "agent_run": {
+      "canceled": [],
+      "failed": [],
+      "queued": [
+        "running",
+        "canceled"
+      ],
+      "running": [
+        "queued",
+        "waiting",
+        "succeeded",
+        "failed",
+        "canceled"
+      ],
+      "succeeded": [],
+      "waiting": [
+        "queued",
+        "canceled"
+      ]
+    },
+    "agent_segment": {
+      "completed": [],
+      "interrupted": [],
+      "streaming": [
+        "completed",
+        "interrupted"
+      ]
+    },
+    "agent_session": {
+      "active": [
+        "archived"
+      ],
+      "archived": []
+    },
+    "agent_tool_invocation": {
+      "not_applied": [],
+      "recovery_required": [
+        "succeeded",
+        "not_applied"
+      ],
+      "running": [
+        "succeeded",
+        "recovery_required"
+      ],
+      "succeeded": []
+    },
+    "deception_environment": {
+      "active": [
+        "adapting",
+        "paused",
+        "retired"
+      ],
+      "adapting": [
+        "active",
+        "recovery_required"
+      ],
+      "building": [
+        "draft",
+        "active",
+        "recovery_required"
+      ],
+      "draft": [
+        "building",
+        "retired"
+      ],
+      "paused": [
+        "active",
+        "retired"
+      ],
+      "recovery_required": [
+        "building",
+        "adapting"
+      ],
+      "retired": []
+    },
+    "deception_revision": {
+      "applied": [],
+      "executing": [
+        "planned",
+        "applied",
+        "rolling_back",
+        "failed",
+        "recovery_required"
+      ],
+      "failed": [],
+      "pending_approval": [
+        "planned",
+        "rejected"
+      ],
+      "planned": [
+        "executing"
+      ],
+      "recovery_required": [
+        "rolling_back"
+      ],
+      "rejected": [],
+      "rolled_back": [],
+      "rolling_back": [
+        "rolled_back",
+        "recovery_required"
+      ]
+    },
+    "deception_revision_step": {
+      "applied": [
+        "verifying",
+        "rolling_back"
+      ],
+      "applying": [
+        "applied",
+        "failed",
+        "rolling_back"
+      ],
+      "failed": [
+        "rolling_back"
+      ],
+      "pending": [
+        "applying"
+      ],
+      "rollback_failed": [
+        "rolling_back"
+      ],
+      "rolled_back": [],
+      "rolling_back": [
+        "rolled_back",
+        "rollback_failed"
+      ],
+      "verified": [
+        "rolling_back"
+      ],
+      "verifying": [
+        "verified",
+        "failed",
+        "rolling_back"
+      ]
+    },
+    "detection_rule_change": {
+      "active": [
+        "superseded"
+      ],
+      "changes_requested": [],
+      "deploying": [
+        "active",
+        "rolling_back"
+      ],
+      "failed": [],
+      "pending_approval": [
+        "changes_requested",
+        "rejected",
+        "deploying"
+      ],
+      "recovery_required": [],
+      "rejected": [],
+      "rolling_back": [
+        "failed",
+        "recovery_required"
+      ],
+      "superseded": []
+    },
+    "detection_rule_deployment": {
+      "active": [
+        "rolling_back"
+      ],
+      "deploying": [
+        "health_check",
+        "rolling_back"
+      ],
+      "failed": [],
+      "health_check": [
+        "active",
+        "rolling_back"
+      ],
+      "pending": [
+        "deploying",
+        "failed"
+      ],
+      "rollback_failed": [
+        "rolling_back"
+      ],
+      "rolled_back": [],
+      "rolling_back": [
+        "rolled_back",
+        "rollback_failed"
+      ]
+    },
+    "detection_rule_version": {
+      "draft": [
+        "validated",
+        "validation_failed"
+      ],
+      "retired": [],
+      "validated": [
+        "validated",
+        "validation_failed",
+        "retired"
+      ],
+      "validation_failed": [
+        "validated",
+        "validation_failed"
+      ]
+    },
+    "investigation_task": {
+      "active": [
+        "blocked",
+        "review",
+        "canceled"
+      ],
+      "blocked": [
+        "active",
+        "review",
+        "canceled"
+      ],
+      "canceled": [],
+      "completed": [],
+      "queued": [
+        "active",
+        "canceled"
+      ],
+      "review": [
+        "active",
+        "completed",
+        "canceled"
+      ]
+    },
+    "knowledge_document": {
+      "analyzing": [
+        "processing",
+        "failed"
+      ],
+      "failed": [],
+      "parsing": [
+        "analyzing",
+        "failed"
+      ],
+      "pending": [
+        "parsing",
+        "failed"
+      ],
+      "processed": [],
+      "processing": [
+        "processed",
+        "failed"
+      ]
+    },
+    "resource_lifecycle": {
+      "active": [
+        "retired"
+      ],
+      "retired": []
+    },
+    "sandbox_async_job": {
+      "canceled": [],
+      "completed": [],
+      "failed": [],
+      "queued": [
+        "running",
+        "failed",
+        "canceled"
+      ],
+      "recovery_required": [
+        "failed"
+      ],
+      "running": [
+        "completed",
+        "failed",
+        "canceled",
+        "recovery_required"
+      ]
+    },
+    "sandbox_container": {
+      "created": [
+        "running",
+        "error",
+        "removed"
+      ],
+      "error": [
+        "running",
+        "stopped",
+        "removed"
+      ],
+      "paused": [
+        "running",
+        "stopped",
+        "error",
+        "removed"
+      ],
+      "removed": [],
+      "running": [
+        "paused",
+        "stopped",
+        "error",
+        "removed"
+      ],
+      "stopped": [
+        "running",
+        "error",
+        "removed"
+      ]
+    },
+    "threat_incident": {
+      "closed": [
+        "investigating"
+      ],
+      "engaging": [
+        "investigating",
+        "finalizing"
+      ],
+      "finalizing": [
+        "investigating",
+        "closed"
+      ],
+      "investigating": [
+        "engaging",
+        "finalizing"
+      ],
+      "open": [
+        "investigating",
+        "finalizing"
+      ]
+    }
+  }
+}

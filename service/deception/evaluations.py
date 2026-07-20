@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
 
 from sqlmodel import select
 
+from utils.time import utc_now
+
 from core.agent.constants import DEFAULT_AGENT_CODE
-from core.runtime.context import main_agent_instance_id
-from core.runtime.notification_dispatch import signal_target_notifications
 from database import get_async_session
 from logger import get_logger
-from model.agent.sessions import AgentSessionMeta
+from model.agent.sessions import AgentSession
 from model.deception.environments import DeceptionEnvironment, DeceptionRevision
 from model.detection.rules import BehaviorSignal, BehaviorSignalEvent
 from model.threat.behaviors import ThreatIncidentBehaviorEvent
@@ -18,8 +17,7 @@ from model.threat.incidents import ThreatIncident
 from schema.deception.environments import DeceptionEvaluationStatus, DeceptionRevisionKind, DeceptionRevisionStatus
 from schema.system_user.users import SystemUserRole
 from schema.threat.investigations import CreateInvestigationTaskRequest, InvestigationTaskPriority
-from service.agent import notifications as agent_notifications
-from service.agent.runtime import resume_main_agent_session
+from service.agent.repository import enqueue_system_run
 from service.threat.incidents import ensure_automated_threat_incident_session_in_session
 from service.threat.investigations import create_investigation_task_in_session
 
@@ -47,7 +45,7 @@ async def stop_deception_evaluation_runtime() -> None:
 
 
 async def create_due_deception_evaluation_tasks() -> int:
-    now = datetime.now()
+    now = utc_now()
     async with get_async_session() as session:
         revision_ids = list((await session.exec(select(DeceptionRevision.id).where(
             DeceptionRevision.kind == DeceptionRevisionKind.ADAPTIVE,
@@ -65,7 +63,6 @@ async def create_due_deception_evaluation_tasks() -> int:
 
 
 async def _create_evaluation_task(revision_id: int) -> bool:
-    target_instance_id = ""
     session_id = ""
     async with get_async_session() as session, session.begin():
         current = (await session.exec(select(DeceptionRevision).where(
@@ -122,24 +119,22 @@ async def _create_evaluation_task(revision_id: int) -> bool:
         session.add(current)
         session_result = await ensure_automated_threat_incident_session_in_session(session, incident)
         if session_result.session_id:
-            meta = (await session.exec(select(AgentSessionMeta).where(
-                AgentSessionMeta.session_id == session_result.session_id,
+            agent_session = (await session.exec(select(AgentSession).where(
+                AgentSession.id == session_result.session_id,
             ).with_for_update())).one()
-            target_instance_id = main_agent_instance_id(meta.session_id, meta.owner_id, DEFAULT_AGENT_CODE)
-            await agent_notifications.enqueue_deception_evaluation_notification_in_session(
+            await enqueue_system_run(
                 session,
-                meta=meta,
-                target_agent_code=DEFAULT_AGENT_CODE,
-                target_agent_instance_id=target_instance_id,
-                incident_id=incident.id,
-                environment_id=environment.id,
-                revision_id=current.id,
-                task_id=result.task.id,
+                agent_session=agent_session,
+                content=(
+                    "A deception revision evaluation task is due. Delegate it to CDE and require evidence-backed conclusions.\n"
+                    f"incident_id: {incident.id}\n"
+                    f"environment_id: {environment.id}\n"
+                    f"revision_id: {current.id}\n"
+                    f"investigation_task_id: {result.task.id}"
+                ),
+                source_key=f"deception-evaluation:{current.id}",
             )
-            session_id = meta.session_id
-    if session_id:
-        await signal_target_notifications(target_instance_id)
-        await resume_main_agent_session(session_id)
+            session_id = agent_session.id
     return True
 
 

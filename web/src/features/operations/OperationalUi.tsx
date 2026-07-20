@@ -2,7 +2,12 @@ import { Tag } from "@douyinfe/semi-ui";
 import type { ReactNode } from "react";
 import { EmptyState } from "../../shared/components/EmptyState";
 import { formatEnumLabel } from "../../shared/lib/labels";
-import { DECEPTION_ENVIRONMENT_STATUS } from "../../shared/api/generated/constants";
+import {
+  DECEPTION_ENVIRONMENT_STATUS,
+  DETECTION_RULE_DEPLOYMENT_STATUS,
+  SANDBOX_ASYNC_JOB_STATUS,
+  SANDBOX_CONTAINER_STATUS,
+} from "../../shared/api/generated/constants";
 
 type OperationalTagColor = "amber" | "blue" | "cyan" | "green" | "grey" | "red";
 
@@ -19,7 +24,7 @@ const TAG_COLORS: Record<string, OperationalTagColor> = {
   contained: "green",
   changes_requested: "amber",
   degraded: "amber",
-  deploying: "blue",
+  [DETECTION_RULE_DEPLOYMENT_STATUS.DEPLOYING]: "blue",
   critical: "red",
   detected: "amber",
   draft: "grey",
@@ -29,7 +34,7 @@ const TAG_COLORS: Record<string, OperationalTagColor> = {
   failed: "red",
   final: "green",
   high: "red",
-  health_check: "cyan",
+  [DETECTION_RULE_DEPLOYMENT_STATUS.HEALTH_CHECK]: "cyan",
   healthy: "green",
   hypothesis: "amber",
   info: "grey",
@@ -40,13 +45,15 @@ const TAG_COLORS: Record<string, OperationalTagColor> = {
   paused: "amber",
   pending_approval: "amber",
   planned: "blue",
-  queued: "grey",
+  [SANDBOX_ASYNC_JOB_STATUS.QUEUED]: "grey",
   review: "cyan",
   rejected: "red",
   [DECEPTION_ENVIRONMENT_STATUS.RECOVERY_REQUIRED]: "red",
-  rolled_back: "grey",
-  rollback_failed: "red",
-  rolling_back: "amber",
+  [SANDBOX_CONTAINER_STATUS.REMOVED]: "grey",
+  [DETECTION_RULE_DEPLOYMENT_STATUS.PENDING]: "grey",
+  [DETECTION_RULE_DEPLOYMENT_STATUS.ROLLED_BACK]: "grey",
+  [DETECTION_RULE_DEPLOYMENT_STATUS.ROLLBACK_FAILED]: "red",
+  [DETECTION_RULE_DEPLOYMENT_STATUS.ROLLING_BACK]: "amber",
   running: "green",
   supported: "green",
   suspicious: "amber",

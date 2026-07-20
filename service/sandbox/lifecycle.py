@@ -2,30 +2,33 @@ import asyncio
 import re
 import secrets
 import socket
-from datetime import datetime
 
 import docker
-from sqlalchemy import or_, update
+from sqlalchemy import or_
 from sqlmodel import select
 
+from core.sandbox.command_jobs import cancel_sandbox_async_commands
 from database import get_async_session
 from logger import get_logger
-from model.agent.sessions import AgentSessionMeta
+from model.agent.sessions import AgentRun
 from model.deception.environments import DeceptionEnvironment
 from model.egress_proxy.proxies import EgressProxy
 from model.host.hosts import ManagedHost
 from model.sandbox.containers import SandboxContainer
 from model.sandbox.images import SandboxImage
 from model.system_user.users import SystemUser
+from schema.common.resources import ResourceLifecycleStatus
+from schema.agent.sessions import AgentRunStatus
 from schema.sandbox.containers import (
     SandboxContainerEgressMode,
     SandboxContainerPortMapping,
+    SandboxContainerProtocol,
     SandboxContainerStatus,
 )
+from service.agent.sandbox_selection import clear_session_sandbox_container_bindings
+from service.egress_proxy.state import snapshot_egress_proxy
 from service.host.docker import inspect_image_on_host_sync
 from service.host.state import ManagedHostConnection, snapshot_managed_host
-from service.egress_proxy.state import snapshot_egress_proxy
-from core.sandbox.command_jobs import cancel_sandbox_async_commands
 from service.sandbox.control_proxy import apply_container_egress
 from service.sandbox.docker_ops import (
     create_container_sync,
@@ -46,6 +49,7 @@ from service.sandbox.status import (
 )
 from service.sandbox.types import SandboxContainerMutationResult
 from service.system_user.locking import lock_system_user_lifecycle
+from utils.time import utc_now
 
 
 logger = get_logger(__name__)
@@ -76,7 +80,7 @@ async def create_sandbox_container(
     owner_id: int,
     port_mappings: list[SandboxContainerPortMapping],
     *,
-    port_requirements: list[tuple[int, str]] | None = None,
+    port_requirements: list[tuple[int, SandboxContainerProtocol]] | None = None,
     provisioned_for_revision_id: int | None = None,
 ) -> SandboxContainerMutationResult:
     return await _create_sandbox_container(
@@ -98,7 +102,7 @@ async def _create_sandbox_container(
     egress_proxy_id: int | None,
     owner_id: int,
     port_mappings: list[SandboxContainerPortMapping],
-    port_requirements: list[tuple[int, str]],
+    port_requirements: list[tuple[int, SandboxContainerProtocol]],
     provisioned_for_revision_id: int | None,
 ) -> SandboxContainerMutationResult:
     docker_host: ManagedHostConnection | None = None
@@ -108,7 +112,10 @@ async def _create_sandbox_container(
         async with get_async_session() as session, session.begin():
             await lock_system_user_lifecycle(session, owner_id)
             host = (await session.exec(
-                select(ManagedHost).where(ManagedHost.id == host_id).with_for_update()
+                select(ManagedHost).where(
+                    ManagedHost.id == host_id,
+                    ManagedHost.status == ResourceLifecycleStatus.ACTIVE,
+                ).with_for_update()
             )).one_or_none()
             if host is None:
                 return SandboxContainerMutationResult(
@@ -119,7 +126,10 @@ async def _create_sandbox_container(
                 )
             docker_host = snapshot_managed_host(host)
             sandbox_image = (await session.exec(
-                select(SandboxImage).where(SandboxImage.id == image_id).with_for_update()
+                select(SandboxImage).where(
+                    SandboxImage.id == image_id,
+                    SandboxImage.status == ResourceLifecycleStatus.ACTIVE,
+                ).with_for_update()
             )).one_or_none()
             if sandbox_image is None:
                 return SandboxContainerMutationResult(
@@ -128,7 +138,11 @@ async def _create_sandbox_container(
                     message="sandbox image not found",
                     not_found=True,
                 )
-            if await session.get(SystemUser, owner_id) is None:
+            owner = (await session.exec(select(SystemUser).where(
+                SystemUser.id == owner_id,
+                SystemUser.status == ResourceLifecycleStatus.ACTIVE,
+            ))).one_or_none()
+            if owner is None:
                 return SandboxContainerMutationResult(
                     record=None,
                     succeeded=False,
@@ -151,7 +165,10 @@ async def _create_sandbox_container(
                     message="explicit port mappings and automatic port requirements cannot be combined",
                 )
             for mapping in port_mappings:
-                if mapping.container_port == sandbox_image.control_proxy_port and mapping.protocol == "tcp":
+                if (
+                    mapping.container_port == sandbox_image.control_proxy_port
+                    and mapping.protocol == SandboxContainerProtocol.TCP
+                ):
                     return SandboxContainerMutationResult(
                         record=None,
                         succeeded=False,
@@ -159,7 +176,10 @@ async def _create_sandbox_container(
                     )
 
             containers = list((await session.exec(
-                select(SandboxContainer).where(SandboxContainer.host_id == host_id).with_for_update()
+                select(SandboxContainer).where(
+                    SandboxContainer.host_id == host_id,
+                    SandboxContainer.status != SandboxContainerStatus.REMOVED,
+                ).with_for_update()
             )).all())
             reserved = _reserved_host_ports(containers)
             if port_requirements:
@@ -176,7 +196,11 @@ async def _create_sandbox_container(
             control_proxy_host_port = await asyncio.to_thread(
                 _allocate_control_proxy_host_port,
                 docker_host.ip_address,
-                {port for port, protocol in reserved.union(requested) if protocol == "tcp"},
+                {
+                    port
+                    for port, protocol in reserved.union(requested)
+                    if protocol == SandboxContainerProtocol.TCP
+                },
             )
             control_proxy_token = secrets.token_urlsafe(32)
             behavior_sensor_id = secrets.token_hex(16)
@@ -184,7 +208,7 @@ async def _create_sandbox_container(
             docker_port_mappings = [*port_mappings, SandboxContainerPortMapping(
                 container_port=sandbox_image.control_proxy_port,
                 host_port=control_proxy_host_port,
-                protocol="tcp",
+                protocol=SandboxContainerProtocol.TCP,
             )]
             proxy_connection = (
                 snapshot_egress_proxy(egress_proxy)
@@ -207,7 +231,7 @@ async def _create_sandbox_container(
                 },
             )
 
-            now = datetime.now()
+            now = utc_now()
             sandbox_container = SandboxContainer(
                 host_id=host_id,
                 container_name=container_name,
@@ -259,15 +283,20 @@ async def _create_sandbox_container(
     )
 
 
-def _reserved_host_ports(containers: list[SandboxContainer]) -> set[tuple[int, str]]:
+def _reserved_host_ports(
+    containers: list[SandboxContainer],
+) -> set[tuple[int, SandboxContainerProtocol]]:
     reserved = {
-        (int(mapping["host_port"]), str(mapping.get("protocol") or "tcp"))
+        (
+            int(mapping["host_port"]),
+            SandboxContainerProtocol(str(mapping.get("protocol") or SandboxContainerProtocol.TCP)),
+        )
         for container in containers
         for mapping in container.port_mappings
         if isinstance(mapping, dict) and isinstance(mapping.get("host_port"), int)
     }
     reserved.update(
-        (container.control_proxy_host_port, "tcp")
+        (container.control_proxy_host_port, SandboxContainerProtocol.TCP)
         for container in containers
         if container.control_proxy_host_port > 0
     )
@@ -275,13 +304,13 @@ def _reserved_host_ports(containers: list[SandboxContainer]) -> set[tuple[int, s
 
 
 def _allocate_requested_port_mappings(
-    requirements: list[tuple[int, str]],
-    reserved: set[tuple[int, str]],
+    requirements: list[tuple[int, SandboxContainerProtocol]],
+    reserved: set[tuple[int, SandboxContainerProtocol]],
 ) -> list[SandboxContainerPortMapping]:
     mappings: list[SandboxContainerPortMapping] = []
     allocated = set(reserved)
     for container_port, protocol in requirements:
-        normalized_protocol = str(protocol).strip().lower()
+        normalized_protocol = SandboxContainerProtocol(protocol)
         host_port = next(
             (
                 port
@@ -317,6 +346,12 @@ async def start_sandbox_container(id: int) -> SandboxContainerMutationResult:
             record=record,
             succeeded=False,
             message="only created or stopped sandbox containers can be started",
+        )
+    if await _has_nonterminal_agent_run(id, record.container.generation):
+        return SandboxContainerMutationResult(
+            record=record,
+            succeeded=False,
+            message="cancel Agent Runs bound to this sandbox generation before starting the container",
         )
 
     try:
@@ -431,7 +466,7 @@ async def update_sandbox_container_egress(
         previous_egress_proxy_id = container.egress_proxy_id
         container.egress_mode = egress_mode
         container.egress_proxy_id = resolved_egress_proxy_id
-        container.updated_at = datetime.now()
+        container.updated_at = utc_now()
         session.add(container)
         await session.commit()
 
@@ -470,7 +505,14 @@ async def stop_sandbox_container(id: int) -> SandboxContainerMutationResult:
             succeeded=False,
             message="only running sandbox containers can be stopped",
         )
+    if await _has_nonterminal_agent_run(id, record.container.generation):
+        return SandboxContainerMutationResult(
+            record=record,
+            succeeded=False,
+            message="cancel Agent Runs bound to this sandbox generation before stopping the container",
+        )
 
+    await cancel_sandbox_async_commands(id)
     try:
         host = await _load_container_host(record.container.host_id)
         if host is None:
@@ -514,6 +556,12 @@ async def pause_sandbox_container(id: int) -> SandboxContainerMutationResult:
             record=record,
             succeeded=False,
             message="only running sandbox containers can be paused",
+        )
+    if await _has_nonterminal_agent_run(id, record.container.generation):
+        return SandboxContainerMutationResult(
+            record=record,
+            succeeded=False,
+            message="cancel Agent Runs bound to this sandbox generation before pausing the container",
         )
 
     try:
@@ -616,11 +664,13 @@ async def resume_sandbox_container(id: int) -> SandboxContainerMutationResult:
 
 
 @serialized_sandbox_container_mutation
-async def delete_sandbox_container(id: int) -> bool:
+async def remove_sandbox_container(id: int) -> bool:
     async with get_async_session() as session:
         sandbox_container = await session.get(SandboxContainer, id)
         if sandbox_container is None:
             return False
+        if sandbox_container.status == SandboxContainerStatus.REMOVED:
+            return True
         environment_id = (await session.exec(
             select(DeceptionEnvironment.id)
             .where(DeceptionEnvironment.sandbox_container_id == id)
@@ -633,21 +683,35 @@ async def delete_sandbox_container(id: int) -> bool:
         host_row = await session.get(ManagedHost, sandbox_container.host_id)
         host = snapshot_managed_host(host_row) if host_row is not None else None
         container_hash = sandbox_container.container_hash
+        generation = sandbox_container.generation
+
+    if await _has_nonterminal_agent_run(id, generation):
+        raise SandboxContainerInUseError(
+            "cancel Agent Runs bound to this sandbox generation before removing the container"
+        )
 
     await cancel_sandbox_async_commands(id)
     await invalidate_agent_tool_bindings(id)
     if host is not None:
-        await asyncio.to_thread(remove_container_sync, host, container_hash)
+        try:
+            await asyncio.to_thread(remove_container_sync, host, container_hash)
+        except docker.errors.NotFound:
+            pass
 
-    async with get_async_session() as session:
-        sandbox_container = await session.get(SandboxContainer, id)
+    async with get_async_session() as session, session.begin():
+        sandbox_container = (await session.exec(select(SandboxContainer).where(
+            SandboxContainer.id == id,
+        ).with_for_update())).one_or_none()
         if sandbox_container is None:
-            return True
+            return False
         await _clear_sandbox_container_references(session, id)
-        await session.delete(sandbox_container)
-        await session.commit()
+        now = utc_now()
+        sandbox_container.status = SandboxContainerStatus.REMOVED
+        sandbox_container.removed_at = now
+        sandbox_container.updated_at = now
+        session.add(sandbox_container)
 
-    logger.info("sandbox container deleted: %s", id)
+    logger.info("sandbox container removed: %s", id)
     return True
 
 
@@ -662,16 +726,8 @@ async def delete_revision_sandbox_container(
         sandbox_container = await session.get(SandboxContainer, id)
         environment = await session.get(DeceptionEnvironment, environment_id)
         if sandbox_container is None:
-            if environment is None or (
-                environment.active_revision_id != revision_id
-                or environment.sandbox_container_id not in {None, id}
-            ):
-                return False
-            if environment.sandbox_container_id == id:
-                environment.sandbox_container_id = None
-                session.add(environment)
-            await _clear_sandbox_container_references(session, id)
-            await session.commit()
+            return False
+        if sandbox_container.status == SandboxContainerStatus.REMOVED:
             return True
         if environment is None:
             return False
@@ -684,6 +740,16 @@ async def delete_revision_sandbox_container(
         host_row = await session.get(ManagedHost, sandbox_container.host_id)
         host = snapshot_managed_host(host_row) if host_row is not None else None
         container_hash = sandbox_container.container_hash
+        generation = sandbox_container.generation
+
+    if await _has_nonterminal_agent_run(id, generation):
+        logger.warning(
+            "revision sandbox cleanup deferred for nonterminal Agent Runs: environment=%s revision=%s container=%s",
+            environment_id,
+            revision_id,
+            id,
+        )
+        return False
 
     await cancel_sandbox_async_commands(id)
     await invalidate_agent_tool_bindings(id)
@@ -709,7 +775,7 @@ async def delete_revision_sandbox_container(
             DeceptionEnvironment.id == environment_id,
         ).with_for_update())).one_or_none()
         if sandbox_container is None:
-            return True
+            return False
         if environment is None or (
             environment.active_revision_id != revision_id
             or environment.sandbox_container_id not in {None, id}
@@ -720,10 +786,14 @@ async def delete_revision_sandbox_container(
             environment.sandbox_container_id = None
             session.add(environment)
         await _clear_sandbox_container_references(session, id)
-        await session.delete(sandbox_container)
+        now = utc_now()
+        sandbox_container.status = SandboxContainerStatus.REMOVED
+        sandbox_container.removed_at = now
+        sandbox_container.updated_at = now
+        session.add(sandbox_container)
 
     logger.info(
-        "revision sandbox container deleted: environment=%s revision=%s container=%s",
+        "revision sandbox container removed: environment=%s revision=%s container=%s",
         environment_id,
         revision_id,
         id,
@@ -744,20 +814,9 @@ async def _rollback_created_container(
 
 
 async def _clear_sandbox_container_references(session, id: int) -> None:
-    await session.execute(
-        update(AgentSessionMeta)
-        .where(
-            or_(
-                AgentSessionMeta.selected_sandbox_container_id == id,
-                AgentSessionMeta.runtime_sandbox_container_id == id,
-            )
-        )
-        .values(
-            selected_sandbox_container_id=None,
-            selected_sandbox_container_generation=0,
-            runtime_sandbox_container_id=None,
-            runtime_sandbox_container_generation=0,
-        )
+    await clear_session_sandbox_container_bindings(
+        session,
+        sandbox_container_id=id,
     )
 
 
@@ -782,7 +841,10 @@ def _allocate_control_proxy_host_port(host_ip: str, reserved_tcp_ports: set[int]
 
 async def _load_container_host(host_id: int) -> ManagedHostConnection | None:
     async with get_async_session() as session:
-        host = await session.get(ManagedHost, host_id)
+        host = (await session.exec(select(ManagedHost).where(
+            ManagedHost.id == host_id,
+            ManagedHost.status == ResourceLifecycleStatus.ACTIVE,
+        ))).one_or_none()
         return snapshot_managed_host(host) if host is not None else None
 
 
@@ -806,7 +868,10 @@ async def _resolve_egress_selection(
         return None, ""
     if egress_proxy_id is None:
         return None, "egress proxy is required for proxy egress mode"
-    statement = select(EgressProxy).where(EgressProxy.id == egress_proxy_id)
+    statement = select(EgressProxy).where(
+        EgressProxy.id == egress_proxy_id,
+        EgressProxy.status == ResourceLifecycleStatus.ACTIVE,
+    )
     if lock:
         statement = statement.with_for_update()
     egress_proxy = (await session.exec(statement)).one_or_none()
@@ -826,6 +891,20 @@ async def _save_container_egress(
             return
         container.egress_mode = egress_mode
         container.egress_proxy_id = egress_proxy_id
-        container.updated_at = datetime.now()
+        container.updated_at = utc_now()
         session.add(container)
         await session.commit()
+
+
+async def _has_nonterminal_agent_run(container_id: int, generation: int) -> bool:
+    async with get_async_session() as session:
+        run_id = (await session.exec(select(AgentRun.id).where(
+            AgentRun.sandbox_container_id == container_id,
+            AgentRun.sandbox_generation == generation,
+            AgentRun.status.in_([
+                AgentRunStatus.QUEUED,
+                AgentRunStatus.RUNNING,
+                AgentRunStatus.WAITING,
+            ]),
+        ).limit(1))).first()
+    return run_id is not None

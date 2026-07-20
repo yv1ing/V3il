@@ -3,10 +3,10 @@ import { buildQuery } from "./query";
 import type {
   CreateEgressProxyRequest,
   CreateEgressProxyResponse,
-  DeleteEgressProxyResponse,
   EgressProxyPathParams,
   QueryEgressProxiesParams,
   QueryEgressProxiesResponse,
+  RetireEgressProxyResponse,
   TestEgressProxyPathParams,
   TestEgressProxyResponse,
   UpdateEgressProxyRequest,
@@ -24,8 +24,8 @@ export const createEgressProxy = defineJsonEndpoint<[payload: CreateEgressProxyR
 export const updateEgressProxy = defineJsonEndpoint<
   [id: EgressProxyPathParams["id"], payload: UpdateEgressProxyRequest], UpdateEgressProxyResponse
 >("PATCH", (id) => `${EGRESS_PROXIES_PATH}/${id}`, (_, payload) => payload);
-export const deleteEgressProxy = defineJsonEndpoint<[id: EgressProxyPathParams["id"]], DeleteEgressProxyResponse>(
-  "DELETE", (id) => `${EGRESS_PROXIES_PATH}/${id}`,
+export const retireEgressProxy = defineJsonEndpoint<[id: EgressProxyPathParams["id"]], RetireEgressProxyResponse>(
+  "POST", (id) => `${EGRESS_PROXIES_PATH}/${id}/retire`,
 );
 export const testEgressProxy = defineJsonEndpoint<[id: TestEgressProxyPathParams["id"]], TestEgressProxyResponse>(
   "POST", (id) => `${EGRESS_PROXIES_PATH}/${id}/test`,

@@ -9,8 +9,10 @@ from schema.threat.investigations import (
     AuditEventKind,
     InvestigationTaskPriority,
     InvestigationTaskStatus,
+    EvidenceRelationType,
 )
-from utils.sqlalchemy import enum_value_type
+from utils.sqlalchemy import enum_value_type, utc_datetime_column
+from utils.time import utc_now
 
 
 class InvestigationTask(SQLModel, table=True):
@@ -21,7 +23,7 @@ class InvestigationTask(SQLModel, table=True):
     )
 
     id: int | None = Field(default=None, primary_key=True)
-    incident_id: int = Field(foreign_key="threat_incidents.id", index=True, ondelete="CASCADE")
+    incident_id: int = Field(foreign_key="threat_incidents.id", index=True, ondelete="RESTRICT")
     title: str = Field(index=True)
     status: InvestigationTaskStatus = Field(
         sa_column=Column(enum_value_type(InvestigationTaskStatus, length=32), nullable=False, index=True)
@@ -36,18 +38,18 @@ class InvestigationTask(SQLModel, table=True):
     blocker_reason: str = ""
     created_by_agent_code: str = Field(default="", index=True)
     created_from_session_id: str = Field(default="", index=True)
-    created_at: datetime = Field(default_factory=datetime.now)
-    updated_at: datetime = Field(default_factory=datetime.now)
+    created_at: datetime = Field(default_factory=utc_now, sa_column=utc_datetime_column())
+    updated_at: datetime = Field(default_factory=utc_now, sa_column=utc_datetime_column())
 
 
 class InvestigationTaskDependency(SQLModel, table=True):
     __tablename__ = "investigation_task_dependencies"
 
-    task_id: int = Field(foreign_key="investigation_tasks.id", primary_key=True, ondelete="CASCADE")
+    task_id: int = Field(foreign_key="investigation_tasks.id", primary_key=True, ondelete="RESTRICT")
     depends_on_task_id: int = Field(
         foreign_key="investigation_tasks.id",
         primary_key=True,
-        ondelete="CASCADE",
+        ondelete="RESTRICT",
     )
 
 
@@ -56,32 +58,47 @@ class InvestigationEvidence(SQLModel, table=True):
     __table_args__ = (Index("ix_investigation_evidence_task_created", "task_id", "created_at"),)
 
     id: int | None = Field(default=None, primary_key=True)
-    task_id: int = Field(foreign_key="investigation_tasks.id", index=True, ondelete="CASCADE")
+    task_id: int = Field(foreign_key="investigation_tasks.id", index=True, ondelete="RESTRICT")
     statement: str = Field(index=True)
     analysis: str = ""
-    related_evidence_ids: list[int] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
     created_by_agent_code: str = Field(default="", index=True)
     created_from_session_id: str = Field(default="", index=True)
-    created_at: datetime = Field(default_factory=datetime.now)
+    created_at: datetime = Field(default_factory=utc_now, sa_column=utc_datetime_column())
 
 
 class InvestigationTaskEvent(SQLModel, table=True):
     __tablename__ = "investigation_task_events"
-    __table_args__ = (
-        Index("ix_investigation_task_events_event", "event_id"),
-        Index("ix_investigation_task_events_evidence", "evidence_id"),
-    )
+    __table_args__ = (Index("ix_investigation_task_events_event", "event_id"),)
 
-    task_id: int = Field(foreign_key="investigation_tasks.id", primary_key=True, ondelete="CASCADE")
-    event_id: int = Field(foreign_key="behavior_events.id", primary_key=True, ondelete="CASCADE")
-    evidence_id: int | None = Field(
-        default=None,
-        foreign_key="investigation_evidence.id",
-        index=True,
-        ondelete="RESTRICT",
+    task_id: int = Field(foreign_key="investigation_tasks.id", primary_key=True, ondelete="RESTRICT")
+    event_id: int = Field(foreign_key="behavior_events.id", primary_key=True, ondelete="RESTRICT")
+    assigned_at: datetime = Field(default_factory=utc_now, sa_column=utc_datetime_column())
+
+
+class EvidenceBehaviorLink(SQLModel, table=True):
+    __tablename__ = "evidence_behavior_links"
+    __table_args__ = (Index("ix_evidence_behavior_event", "event_id", "relation"),)
+
+    evidence_id: int = Field(foreign_key="investigation_evidence.id", primary_key=True, ondelete="RESTRICT")
+    event_id: int = Field(foreign_key="behavior_events.id", primary_key=True, ondelete="RESTRICT")
+    relation: EvidenceRelationType = Field(
+        sa_column=Column(enum_value_type(EvidenceRelationType, length=24), nullable=False, index=True)
     )
-    assigned_at: datetime = Field(default_factory=datetime.now)
-    covered_at: datetime | None = None
+    linked_at: datetime = Field(default_factory=utc_now, sa_column=utc_datetime_column())
+
+
+class EvidenceRelation(SQLModel, table=True):
+    __tablename__ = "evidence_relations"
+    __table_args__ = (CheckConstraint("source_evidence_id <> target_evidence_id", name="ck_evidence_relation_not_self"),)
+
+    source_evidence_id: int = Field(foreign_key="investigation_evidence.id", primary_key=True, ondelete="RESTRICT")
+    target_evidence_id: int = Field(foreign_key="investigation_evidence.id", primary_key=True, ondelete="RESTRICT")
+    relation: EvidenceRelationType = Field(sa_column=Column(
+        enum_value_type(EvidenceRelationType, length=24),
+        primary_key=True,
+        nullable=False,
+    ))
+    linked_at: datetime = Field(default_factory=utc_now, sa_column=utc_datetime_column())
 
 
 class AuditEvent(SQLModel, table=True):
@@ -101,31 +118,31 @@ class AuditEvent(SQLModel, table=True):
         default=None,
         foreign_key="threat_incidents.id",
         index=True,
-        ondelete="CASCADE",
+        ondelete="RESTRICT",
     )
     environment_id: int | None = Field(
         default=None,
         foreign_key="deception_environments.id",
         index=True,
-        ondelete="CASCADE",
+        ondelete="RESTRICT",
     )
     task_id: int | None = Field(
         default=None,
         foreign_key="investigation_tasks.id",
         index=True,
-        ondelete="SET NULL",
+        ondelete="RESTRICT",
     )
     detection_rule_id: int | None = Field(
         default=None,
         foreign_key="detection_rules.id",
         index=True,
-        ondelete="CASCADE",
+        ondelete="RESTRICT",
     )
     managed_host_id: int | None = Field(
         default=None,
         foreign_key="managed_hosts.id",
         index=True,
-        ondelete="CASCADE",
+        ondelete="RESTRICT",
     )
     kind: AuditEventKind = Field(
         sa_column=Column(enum_value_type(AuditEventKind, length=64), nullable=False, index=True)
@@ -139,4 +156,7 @@ class AuditEvent(SQLModel, table=True):
     object_id: str = Field(default="", max_length=128, index=True)
     summary: str = ""
     details: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
-    created_at: datetime = Field(default_factory=datetime.now, index=True)
+    created_at: datetime = Field(
+        default_factory=utc_now,
+        sa_column=utc_datetime_column(index=True),
+    )

@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime
 
 from sqlalchemy import func, or_
 from sqlmodel import select
+
+from utils.time import utc_now
 
 from database import get_async_session
 from model.deception.environments import DeceptionEnvironment
@@ -18,10 +19,13 @@ from model.detection.rules import (
     ManagedHostSensor,
 )
 from model.host.hosts import ManagedHost
+from schema.agent.capabilities import AgentCapability, require_agent_capability
+from schema.common.resources import ResourceLifecycleStatus
 from schema.detection.rules import (
     ConfigureManagedHostSensorRequest,
     CreateDetectionRuleRequest,
     DetectionRuleChangeAction,
+    DetectionRuleChangeDecision,
     DetectionRuleChangeRequestSchema,
     DetectionRuleChangeStatus,
     DetectionRuleSchema,
@@ -39,7 +43,9 @@ from schema.system_user.users import SystemUserRole
 from schema.threat.investigations import AuditActorType, AuditEventKind
 from service.common.pagination import Page, RESOURCE_PAGE_SIZE, page_offset
 from service.detection.bundles import build_effective_bundles
+from service.detection.leases import detection_mutation_lease
 from service.detection.validation import validate_rule_content
+from service.runtime.leases import RuntimeLeaseHandle, RuntimeLeaseUnavailable
 from service.threat.audit import add_audit_event
 
 
@@ -175,10 +181,10 @@ async def seed_builtin_detection_rules() -> int:
                 status=DetectionRuleVersionStatus.VALIDATED,
                 content=content,
                 content_sha256=_sha256(content),
-                validation_result=validate_rule_content(rule.type, content),
+                validation_result=validate_rule_content(rule.type, content).model_dump(mode="json"),
                 created_by_actor_type=AuditActorType.SYSTEM.value,
                 created_by_actor_code="system",
-                validated_at=datetime.now(),
+                validated_at=utc_now(),
             )
             session.add(version)
             await session.flush()
@@ -190,7 +196,11 @@ async def seed_builtin_detection_rules() -> int:
 
 async def configure_sensor(request: ConfigureManagedHostSensorRequest) -> ManagedHostSensorSchema:
     async with get_async_session() as session, session.begin():
-        if await session.get(ManagedHost, request.host_id) is None:
+        host = (await session.exec(select(ManagedHost).where(
+            ManagedHost.id == request.host_id,
+            ManagedHost.status == ResourceLifecycleStatus.ACTIVE,
+        ))).one_or_none()
+        if host is None:
             raise LookupError("managed host not found")
         sensor = (await session.exec(
             select(ManagedHostSensor).where(ManagedHostSensor.host_id == request.host_id).with_for_update()
@@ -203,7 +213,7 @@ async def configure_sensor(request: ConfigureManagedHostSensorRequest) -> Manage
                 raise ValueError("sensor identity and Proxy token are immutable once the evidence chain exists")
             for key, value in values.items():
                 setattr(sensor, key, value)
-            sensor.updated_at = datetime.now()
+            sensor.updated_at = utc_now()
         session.add(sensor)
         await session.flush()
         await add_audit_event(
@@ -247,6 +257,7 @@ async def create_rule(
     actor_code: str = "",
     source_session_id: str = "",
 ) -> tuple[DetectionRuleSchema, DetectionRuleVersionSchema]:
+    _require_agent_rule_author(actor_type, actor_code)
     async with get_async_session() as session, session.begin():
         await _require_scope_access(session, request.scope, request.host_id, request.environment_id, user_id, user_role)
         validation = validate_rule_content(request.type, request.content)
@@ -266,14 +277,14 @@ async def create_rule(
         version = DetectionRuleVersion(
             rule_id=rule.id,
             version=1,
-            status=DetectionRuleVersionStatus.VALIDATED if validation["valid"] else DetectionRuleVersionStatus.VALIDATION_FAILED,
+            status=DetectionRuleVersionStatus.VALIDATED if validation.valid else DetectionRuleVersionStatus.VALIDATION_FAILED,
             content=request.content,
             content_sha256=_sha256(request.content),
-            validation_result=validation,
+            validation_result=validation.model_dump(mode="json"),
             created_by_actor_type=actor_type.value,
             created_by_actor_code=actor_code or str(user_id),
             created_from_session_id=source_session_id,
-            validated_at=datetime.now(),
+            validated_at=utc_now(),
         )
         session.add(version)
         await session.flush()
@@ -292,6 +303,7 @@ async def create_rule_version(
     actor_code: str = "",
     source_session_id: str = "",
 ) -> DetectionRuleVersionSchema:
+    _require_agent_rule_author(actor_type, actor_code)
     async with get_async_session() as session, session.begin():
         rule = await _load_accessible_rule(session, rule_id, user_id, user_role, lock=True)
         parent = await session.get(DetectionRuleVersion, parent_version_id) if parent_version_id else None
@@ -303,14 +315,14 @@ async def create_rule_version(
             rule_id=rule_id,
             version=int(latest) + 1,
             parent_version_id=parent_version_id,
-            status=DetectionRuleVersionStatus.VALIDATED if validation["valid"] else DetectionRuleVersionStatus.VALIDATION_FAILED,
+            status=DetectionRuleVersionStatus.VALIDATED if validation.valid else DetectionRuleVersionStatus.VALIDATION_FAILED,
             content=content,
             content_sha256=_sha256(content),
-            validation_result=validation,
+            validation_result=validation.model_dump(mode="json"),
             created_by_actor_type=actor_type.value,
             created_by_actor_code=actor_code or str(user_id),
             created_from_session_id=source_session_id,
-            validated_at=datetime.now(),
+            validated_at=utc_now(),
         )
         session.add(version)
         await session.flush()
@@ -328,13 +340,16 @@ async def validate_rule_version(
     actor_code: str = "",
     source_session_id: str = "",
 ) -> DetectionRuleVersionSchema:
+    _require_agent_rule_author(actor_type, actor_code)
     async with get_async_session() as session, session.begin():
         rule = await _load_accessible_rule(session, rule_id, user_id, user_role)
         version = await _load_rule_version(session, rule_id, version_id, lock=True)
+        if version.status == DetectionRuleVersionStatus.RETIRED:
+            raise ValueError("retired rule versions cannot be validated")
         validation = validate_rule_content(rule.type, version.content)
-        version.validation_result = validation
-        version.status = DetectionRuleVersionStatus.VALIDATED if validation["valid"] else DetectionRuleVersionStatus.VALIDATION_FAILED
-        version.validated_at = datetime.now()
+        version.validation_result = validation.model_dump(mode="json")
+        version.status = DetectionRuleVersionStatus.VALIDATED if validation.valid else DetectionRuleVersionStatus.VALIDATION_FAILED
+        version.validated_at = utc_now()
         session.add(version)
         await _audit_rule(
             session,
@@ -343,7 +358,7 @@ async def validate_rule_version(
             actor_type,
             actor_code or str(user_id),
             source_session_id,
-            {"version_id": version.id, "valid": validation["valid"]},
+            {"version_id": version.id, "valid": validation.valid},
         )
         return DetectionRuleVersionSchema.model_validate(version)
 
@@ -359,13 +374,14 @@ async def replay_rule_version(
     actor_code: str = "",
     source_session_id: str = "",
 ) -> DetectionRuleVersionSchema:
+    _require_agent_rule_author(actor_type, actor_code)
     from service.detection.engine import replay_rule
 
     async with get_async_session() as session, session.begin():
         rule = await _load_accessible_rule(session, rule_id, user_id, user_role)
         version = await _load_rule_version(session, rule_id, version_id, lock=True)
         result = await replay_rule(session, rule, version, request.event_ids)
-        version.replay_result = result
+        version.replay_result = result.model_dump(mode="json")
         session.add(version)
         await _audit_rule(
             session,
@@ -389,6 +405,7 @@ async def submit_rule_change(
     actor_code: str = "",
     source_session_id: str = "",
 ) -> DetectionRuleChangeRequestSchema:
+    _require_agent_rule_author(actor_type, actor_code)
     async with get_async_session() as session, session.begin():
         rule = await _load_accessible_rule(session, rule_id, user_id, user_role, lock=True)
         existing = (await session.exec(select(DetectionRuleChangeRequest).where(
@@ -396,6 +413,8 @@ async def submit_rule_change(
             DetectionRuleChangeRequest.status.in_({
                 DetectionRuleChangeStatus.PENDING_APPROVAL,
                 DetectionRuleChangeStatus.DEPLOYING,
+                DetectionRuleChangeStatus.ROLLING_BACK,
+                DetectionRuleChangeStatus.RECOVERY_REQUIRED,
             }),
         ))).first()
         if existing is not None:
@@ -456,13 +475,37 @@ async def submit_rule_change(
 async def decide_rule_change(
     change_id: int,
     *,
-    decision: str,
+    decision: DetectionRuleChangeDecision,
+    reason: str,
+    user_id: int,
+    user_role: SystemUserRole,
+) -> DetectionRuleChangeRequestSchema:
+    try:
+        async with detection_mutation_lease(wait_timeout_seconds=0) as lease:
+            return await _decide_rule_change_owned(
+                change_id,
+                lease=lease,
+                decision=decision,
+                reason=reason,
+                user_id=user_id,
+                user_role=user_role,
+            )
+    except RuntimeLeaseUnavailable as exc:
+        raise ValueError("another detection control-plane mutation is in progress") from exc
+
+
+async def _decide_rule_change_owned(
+    change_id: int,
+    *,
+    lease: RuntimeLeaseHandle,
+    decision: DetectionRuleChangeDecision,
     reason: str,
     user_id: int,
     user_role: SystemUserRole,
 ) -> DetectionRuleChangeRequestSchema:
     should_deploy = False
     async with get_async_session() as session, session.begin():
+        await lease.assert_owned(session, lock=True)
         change = (await session.exec(select(DetectionRuleChangeRequest).where(
             DetectionRuleChangeRequest.id == change_id,
         ).with_for_update())).one_or_none()
@@ -472,15 +515,31 @@ async def decide_rule_change(
             raise ValueError("change request is not awaiting approval")
         rule = await _load_accessible_rule(session, change.rule_id, user_id, user_role, lock=True)
         await _require_approval_access(session, rule, user_id, user_role)
-        if decision != "approve":
-            change.status = DetectionRuleChangeStatus.REJECTED if decision == "reject" else DetectionRuleChangeStatus.CHANGES_REQUESTED
+        if decision != DetectionRuleChangeDecision.APPROVE:
+            change.status = (
+                DetectionRuleChangeStatus.REJECTED
+                if decision == DetectionRuleChangeDecision.REJECT
+                else DetectionRuleChangeStatus.CHANGES_REQUESTED
+            )
             change.decided_by_user_id = user_id
             change.decision_reason = reason
-            change.decided_at = datetime.now()
-            change.resolved_at = datetime.now()
+            change.decided_at = utc_now()
+            change.resolved_at = utc_now()
             session.add(change)
             await _audit_rule(session, rule, f"Detection rule change {change.status.value}.", AuditActorType.USER, str(user_id), "", {"change_request_id": change.id, "reason": reason})
             return DetectionRuleChangeRequestSchema.model_validate(change)
+        deploying_change = (await session.exec(
+            select(DetectionRuleChangeRequest.id).where(
+                DetectionRuleChangeRequest.id != change_id,
+                DetectionRuleChangeRequest.status.in_({
+                    DetectionRuleChangeStatus.DEPLOYING,
+                    DetectionRuleChangeStatus.ROLLING_BACK,
+                    DetectionRuleChangeStatus.RECOVERY_REQUIRED,
+                }),
+            )
+        )).first()
+        if deploying_change is not None:
+            raise ValueError("another detection rule change is already deploying")
         version = await _load_rule_version(session, rule.id, change.rule_version_id) if change.rule_version_id else None
         bundles = await build_effective_bundles(
             session,
@@ -497,7 +556,7 @@ async def decide_rule_change(
         change.status = DetectionRuleChangeStatus.DEPLOYING
         change.decided_by_user_id = user_id
         change.decision_reason = reason
-        change.decided_at = datetime.now()
+        change.decided_at = utc_now()
         session.add(change)
         sensors = list((await session.exec(select(ManagedHostSensor).where(ManagedHostSensor.id.in_(change.target_sensor_ids)))).all())
         for sensor in sensors:
@@ -611,7 +670,11 @@ async def _require_scope_access(session, scope, host_id, environment_id, user_id
             raise ValueError("host rules require exactly one host")
         if user_role != SystemUserRole.ADMIN:
             raise PermissionError("host rules require administrator access")
-        if await session.get(ManagedHost, host_id) is None:
+        host = (await session.exec(select(ManagedHost).where(
+            ManagedHost.id == host_id,
+            ManagedHost.status == ResourceLifecycleStatus.ACTIVE,
+        ))).one_or_none()
+        if host is None:
             raise LookupError("managed host not found")
         return
     if environment_id is None or host_id is not None:
@@ -672,6 +735,11 @@ async def _audit_rule(session, rule, summary, actor_type, actor_code, source_ses
         summary=summary,
         details=details,
     )
+
+
+def _require_agent_rule_author(actor_type: AuditActorType, actor_code: str) -> None:
+    if actor_type == AuditActorType.AGENT:
+        require_agent_capability(actor_code, AgentCapability.DETECTION_AUTHOR)
 
 
 def _sha256(content: str) -> str:

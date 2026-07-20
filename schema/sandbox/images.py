@@ -4,6 +4,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from schema.common.responses import PaginatedResponse
+from schema.common.resources import ResourceLifecycleStatus
 
 
 # sandbox image public data schema
@@ -11,11 +12,13 @@ class SandboxImageSchema(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    status: ResourceLifecycleStatus
     image_name: str
     control_proxy_port: int = Field(title="Control Port")
     supports_tor: bool
     created_at: datetime
     updated_at: datetime
+    retired_at: datetime | None
 
 
 # create sandbox image request schema
@@ -32,8 +35,7 @@ class CreateSandboxImageRequest(BaseModel):
         return value
 
 
-# delete sandbox image response schema (presence implies success)
-class DeleteSandboxImageResponse(BaseModel):
+class RetireSandboxImageResponse(BaseModel):
     id: int
 
 

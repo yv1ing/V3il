@@ -11,12 +11,14 @@ from service.knowledge.resources import (
     remove_knowledge_source_documents,
     remove_stale_knowledge_source_documents,
 )
+from service.runtime.leases import RuntimeLeaseLost, RuntimeLeaseUnavailable, runtime_lease
 
 
 logger = get_logger(__name__)
 
 _DOCUMENT_STATUS_POLL_SECONDS = 5
 _PIPELINE_RETRY_SECONDS = 5
+_LEASE_NAME = "knowledge-document-processing-runtime"
 _RECOVERABLE_STATUSES = (
     DocStatus.PENDING,
     DocStatus.PARSING,
@@ -77,27 +79,42 @@ async def _knowledge_document_processing_loop() -> None:
     while True:
         await _processing_requested.wait()
         _processing_requested.clear()
-
-        track_ids = set(_pending_track_ids)
-        _pending_track_ids.difference_update(track_ids)
-        should_recover = _recover_on_next_run
-
+        track_ids: set[str] = set()
+        should_recover = False
         try:
-            has_documents = bool(track_ids)
-            if should_recover:
-                recovered_documents, recovered_track_ids = await _recoverable_documents()
-                has_documents = has_documents or recovered_documents
-                track_ids.update(recovered_track_ids)
-                _recover_on_next_run = False
+            async with runtime_lease(
+                _LEASE_NAME,
+                wait_timeout_seconds=1,
+            ) as lease:
+                track_ids = set(_pending_track_ids)
+                _pending_track_ids.difference_update(track_ids)
+                should_recover = _recover_on_next_run
+                has_documents = bool(track_ids)
+                if should_recover:
+                    recovered_documents, recovered_track_ids = await lease.run_while_owned(
+                        _recoverable_documents
+                    )
+                    has_documents = has_documents or recovered_documents
+                    track_ids.update(recovered_track_ids)
+                    _recover_on_next_run = False
 
-            if not has_documents:
-                continue
-            await _process_knowledge_documents(track_ids)
+                if not has_documents:
+                    continue
+                await lease.run_while_owned(lambda: _process_knowledge_documents(track_ids))
         except asyncio.CancelledError:
             _pending_track_ids.update(track_ids)
             if should_recover:
                 _recover_on_next_run = True
             raise
+        except RuntimeLeaseUnavailable:
+            await asyncio.sleep(_PIPELINE_RETRY_SECONDS)
+            _processing_requested.set()
+        except RuntimeLeaseLost:
+            if should_recover:
+                _recover_on_next_run = True
+            _pending_track_ids.update(track_ids)
+            await asyncio.sleep(_PIPELINE_RETRY_SECONDS)
+            _processing_requested.set()
         except Exception:
             logger.exception("knowledge document pipeline iteration failed")
             if should_recover:

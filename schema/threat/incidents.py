@@ -4,7 +4,6 @@ from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from schema.agent.sessions import AgentSessionSummarySchema
 from schema.common.responses import PaginatedResponse
 
 
@@ -14,6 +13,23 @@ class ThreatIncidentStatus(StrEnum):
     ENGAGING = "engaging"
     FINALIZING = "finalizing"
     CLOSED = "closed"
+
+
+class ThreatIncidentAction(StrEnum):
+    START_INVESTIGATION = "start-investigation"
+    START_ENGAGEMENT = "start-engagement"
+    FINALIZE = "finalize"
+    CLOSE = "close"
+    REOPEN = "reopen"
+
+
+THREAT_INCIDENT_ACTION_TARGETS: dict[ThreatIncidentAction, ThreatIncidentStatus] = {
+    ThreatIncidentAction.START_INVESTIGATION: ThreatIncidentStatus.INVESTIGATING,
+    ThreatIncidentAction.START_ENGAGEMENT: ThreatIncidentStatus.ENGAGING,
+    ThreatIncidentAction.FINALIZE: ThreatIncidentStatus.FINALIZING,
+    ThreatIncidentAction.CLOSE: ThreatIncidentStatus.CLOSED,
+    ThreatIncidentAction.REOPEN: ThreatIncidentStatus.INVESTIGATING,
+}
 
 
 THREAT_INCIDENT_STATUS_TRANSITIONS: dict[ThreatIncidentStatus, tuple[ThreatIncidentStatus, ...]] = {
@@ -97,12 +113,4 @@ class TransitionThreatIncidentRequest(BaseModel):
 
 
 class QueryThreatIncidentsResponse(PaginatedResponse[ThreatIncidentSchema]):
-    pass
-
-
-class CreateThreatIncidentSessionResponse(BaseModel):
-    session_id: str
-
-
-class ListThreatIncidentSessionsResponse(PaginatedResponse[AgentSessionSummarySchema]):
     pass

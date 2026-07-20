@@ -1,5 +1,3 @@
-from datetime import datetime
-
 from sqlmodel import select
 
 from database import get_async_session
@@ -18,6 +16,7 @@ from schema.threat.behaviors import (
     IngestBehaviorEventBatchRequest,
 )
 from service.threat.behaviors import ingest_behavior_event_batch
+from utils.time import utc_now
 
 
 ContainerRuntimeEvidence = tuple[int, tuple[int, ...]]
@@ -97,7 +96,7 @@ async def record_container_runtime_state(
     sequence = cursor_sequence + 1
     event = CapturedBehaviorEvent(
         sequence=sequence,
-        observed_at=datetime.now(),
+        observed_at=utc_now(),
         category=BehaviorEventCategory.SYSTEM,
         action=action,
         source=BehaviorEventSource.CONTROL_PLANE,

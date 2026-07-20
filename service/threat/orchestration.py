@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from sqlmodel import select
 
+from utils.time import utc_now
+
 from config import get_config
 from core.agent.constants import DEFAULT_AGENT_CODE
-from core.runtime.context import main_agent_instance_id
-from core.runtime.notification_dispatch import signal_target_notifications
 from database import get_async_session
 from logger import get_logger
-from model.agent.sessions import AgentSessionMeta
+from model.agent.sessions import AgentSession
 from model.deception.environments import DeceptionEnvironment
 from model.detection.rules import BehaviorDecision, BehaviorSignal, BehaviorSignalEvent
 from model.threat.behaviors import BehaviorEvent, ThreatIncidentBehaviorEvent
@@ -19,8 +19,7 @@ from schema.detection.rules import BehaviorDecisionMode, BehaviorSignalStatus
 from schema.system_user.users import SystemUserRole
 from schema.threat.incidents import ThreatConfidence, ThreatIncidentStatus, ThreatSeverity
 from schema.threat.investigations import AuditActorType, AuditEventKind
-from service.agent import notifications as agent_notifications
-from service.agent.runtime import resume_main_agent_session
+from service.agent.repository import enqueue_system_run
 from service.detection.engine import process_behavior_events
 from service.threat.audit import add_audit_event
 from service.threat.incidents import ensure_automated_threat_incident_session_in_session
@@ -39,17 +38,16 @@ async def orchestrate_behavior_events(environment_id: int, event_ids: list[int])
     signal_ids = await process_behavior_events(environment_id, normalized)
     if not signal_ids:
         return {}
-    assignments, resumptions = await _correlate_behavior_signals(
+    assignments, _ = await _correlate_behavior_signals(
         environment_id,
         signal_ids,
         correlation_window=timedelta(seconds=automation.correlation_window_seconds),
     )
-    await _resume_and_signal(resumptions)
     return assignments
 
 
 async def orchestrate_ready_behavior_signals(limit: int = 1000) -> int:
-    now = datetime.now()
+    now = utc_now()
     async with get_async_session() as session:
         rows = list((await session.exec(select(
             BehaviorSignal.id,
@@ -67,13 +65,12 @@ async def orchestrate_ready_behavior_signals(limit: int = 1000) -> int:
     for environment_id, signal_ids in grouped.items():
         _, resumptions = await _correlate_behavior_signals(environment_id, signal_ids, correlation_window=window)
         resumed += len(resumptions)
-        await _resume_and_signal(resumptions)
     return resumed
 
 
 async def _correlate_behavior_signals(environment_id: int, signal_ids: list[int], *, correlation_window: timedelta):
     assignments: dict[int, list[int]] = {}
-    resumptions: set[tuple[str, str]] = set()
+    resumptions: set[str] = set()
     async with get_async_session() as session, session.begin():
         environment = (await session.exec(select(DeceptionEnvironment).where(
             DeceptionEnvironment.id == environment_id,
@@ -127,7 +124,7 @@ async def _correlate_behavior_signals(environment_id: int, signal_ids: list[int]
                 incidents.insert(0, incident)
                 method, key = "new_signal_incident", fingerprint
             signal.incident_id = incident.id
-            signal.updated_at = datetime.now()
+            signal.updated_at = utc_now()
             session.add(signal)
             linked_event_ids: list[int] = []
             for event, decision in event_rows:
@@ -144,7 +141,7 @@ async def _correlate_behavior_signals(environment_id: int, signal_ids: list[int]
                         is_material=decision.material,
                         materiality_reason=decision.reason,
                         correlation_score=signal.score,
-                        linked_at=datetime.now(),
+                        linked_at=utc_now(),
                     )
                     session.add(link)
                     linked_event_ids.append(event.id)
@@ -189,7 +186,7 @@ async def _correlate_behavior_signals(environment_id: int, signal_ids: list[int]
                     summary="Threat incident returned to investigation after a new material signal.",
                     details={"signal_id": signal.id},
                 )
-            incident.updated_at = datetime.now()
+            incident.updated_at = utc_now()
             session.add(incident)
             assignments.setdefault(incident.id, []).extend(linked_event_ids)
             await add_audit_event(
@@ -210,7 +207,7 @@ async def _correlate_behavior_signals(environment_id: int, signal_ids: list[int]
                     "event_ids": [event.id for event, _ in event_rows],
                 },
             )
-            now = datetime.now()
+            now = utc_now()
             ready = signal.score >= 70 or signal.debounce_until is None or signal.debounce_until <= now
             if ready and signal.notified_at is None:
                 notifications.setdefault(incident.id, []).append(signal)
@@ -219,23 +216,24 @@ async def _correlate_behavior_signals(environment_id: int, signal_ids: list[int]
             result = await ensure_automated_threat_incident_session_in_session(session, incident)
             if not result.session_id:
                 continue
-            meta = (await session.exec(select(AgentSessionMeta).where(
-                AgentSessionMeta.session_id == result.session_id,
+            agent_session = (await session.exec(select(AgentSession).where(
+                AgentSession.id == result.session_id,
             ).with_for_update())).one()
-            target_instance_id = main_agent_instance_id(result.session_id, meta.owner_id, DEFAULT_AGENT_CODE)
-            notification = await agent_notifications.enqueue_behavior_signals_notification_in_session(
+            signal_ids = [signal.id for signal in pending_signals]
+            run = await enqueue_system_run(
                 session,
-                meta=meta,
-                target_agent_code=DEFAULT_AGENT_CODE,
-                target_agent_instance_id=target_instance_id,
-                incident_id=incident_id,
-                signal_ids=[signal.id for signal in pending_signals],
-                highest_score=max(signal.score for signal in pending_signals),
-                signal_limit=get_config().threat_automation.notification_event_limit,
+                agent_session=agent_session,
+                content=(
+                    "New deterministic behavior signals require investigation. Treat these identifiers as trusted runtime state.\n"
+                    f"incident_id: {incident_id}\n"
+                    f"signal_ids: {signal_ids}\n"
+                    f"highest_score: {max(signal.score for signal in pending_signals)}"
+                ),
+                source_key=f"behavior-signals:{incident_id}:{','.join(str(item) for item in signal_ids)}",
             )
-            if notification is None:
+            if run is None:
                 continue
-            notified_at = datetime.now()
+            notified_at = utc_now()
             for signal in pending_signals:
                 cooldown_duration = max(
                     (signal.cooldown_until or signal.created_at) - signal.created_at,
@@ -246,19 +244,8 @@ async def _correlate_behavior_signals(environment_id: int, signal_ids: list[int]
                 signal.cooldown_until = notified_at + cooldown_duration
                 signal.updated_at = notified_at
                 session.add(signal)
-            resumptions.add((result.session_id, target_instance_id))
+            resumptions.add(result.session_id)
     return assignments, resumptions
-
-
-async def _resume_and_signal(resumptions: set[tuple[str, str]]) -> None:
-    if DEFAULT_AGENT_CODE not in get_config().agents:
-        return
-    for session_id, target_instance_id in resumptions:
-        try:
-            await signal_target_notifications(target_instance_id)
-            await resume_main_agent_session(session_id)
-        except Exception:
-            logger.exception("autonomous threat investigation resume failed: session=%s", session_id)
 
 
 def _match_incident(signal, event, incidents, window):
@@ -352,7 +339,7 @@ async def recover_unprocessed_behavior_events(limit: int = 1000):
 
 
 async def advance_idle_incidents() -> int:
-    now = datetime.now()
+    now = utc_now()
     async with get_async_session() as session:
         incidents = list((await session.exec(select(
             ThreatIncident.id,

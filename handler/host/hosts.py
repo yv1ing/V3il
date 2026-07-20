@@ -18,8 +18,8 @@ from middleware.system_user import resolve_current_user
 from schema.common.responses import CommonResponse
 from schema.host.hosts import (
     CreateManagedHostRequest,
-    DeleteManagedHostImageRequest,
-    DeleteManagedHostResponse,
+    RemoveManagedHostImageRequest,
+    RetireManagedHostResponse,
     ListManagedHostImagesResponse,
     ManagedHostSchema,
     PullManagedHostImagesRequest,
@@ -31,8 +31,6 @@ from schema.system_user.users import SystemUserRole
 from service.common.pagination import paginated_payload
 from service.host.hosts import (
     create_managed_host,
-    delete_managed_host,
-    delete_managed_host_image,
     list_managed_host_images,
     pull_managed_host_images,
     query_managed_hosts,
@@ -88,13 +86,13 @@ async def update_managed_host_handler(id: int, request: UpdateManagedHostRequest
     return CommonResponse(data=result.host)
 
 
-async def delete_managed_host_handler(id: int) -> CommonResponse:
-    result = await delete_managed_host(id)
+async def retire_managed_host_handler(id: int) -> CommonResponse:
+    result = await retire_managed_host(id)
     if result.not_found:
         raise_api_error(HTTPStatus.NOT_FOUND, "managed host not found")
-    if not result.deleted:
+    if not result.retired:
         raise_api_error(HTTPStatus.BAD_REQUEST, result.message)
-    return CommonResponse(data=DeleteManagedHostResponse(id=id))
+    return CommonResponse(data=RetireManagedHostResponse(id=id))
 
 
 async def query_managed_hosts_handler(page: int, size: int, keyword: str) -> CommonResponse:
@@ -129,8 +127,8 @@ async def pull_managed_host_images_handler(id: int, request: PullManagedHostImag
     return CommonResponse(data=PullManagedHostImagesResponse(items=results))
 
 
-async def delete_managed_host_image_handler(id: int, request: DeleteManagedHostImageRequest) -> CommonResponse:
-    error = await delete_managed_host_image(id, request.image_id, force=request.force)
+async def remove_managed_host_image_handler(id: int, request: RemoveManagedHostImageRequest) -> CommonResponse:
+    error = await remove_managed_host_image(id, request.image_id, force=request.force)
     if error:
         code = HTTPStatus.NOT_FOUND.value if "not found" in error.lower() else HTTPStatus.BAD_REQUEST.value
         raise_api_error(code, error)
@@ -237,3 +235,5 @@ async def _send_shell_error(websocket: WebSocket, error: Exception) -> None:
         return
     message = str(error).strip() or error.__class__.__name__
     await websocket.send_bytes(f"\r\nShell connection failed: {message}\r\n".encode())
+    retire_managed_host,
+    remove_managed_host_image,

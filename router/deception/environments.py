@@ -9,6 +9,7 @@ from handler.deception.environments import (
     execute_deception_revision_handler,
     evaluate_deception_revision_handler,
     get_deception_environment_handler,
+    get_deception_environment_session_handler,
     get_deception_references_handler,
     list_deception_workloads_handler,
     plan_deception_revision_handler,
@@ -24,6 +25,7 @@ from handler.deception.environments import (
 from middleware.system_user import AuthUser, require_user
 from router.common.responses import COMMON_ERROR_RESPONSES, CONFLICT_RESPONSE, FORBIDDEN_RESPONSE, not_found_response
 from schema.common.responses import CommonResponse
+from schema.agent.sessions import AgentSessionSummarySchema
 from schema.deception.environments import (
     CreateDeceptionEnvironmentRequest,
     CreateDeceptionArtifactRequest,
@@ -92,6 +94,10 @@ async def references_route(id: int, user: AuthUser = Depends(require_user)):
     return await get_deception_references_handler(id, user)
 
 
+async def session_route(id: int, user: AuthUser = Depends(require_user)):
+    return await get_deception_environment_session_handler(id, user)
+
+
 async def update_route(id: int, request: UpdateDeceptionEnvironmentRequest, user: AuthUser = Depends(require_user)):
     return await update_deception_environment_handler(id, request, user)
 
@@ -152,6 +158,7 @@ errors = {**COMMON_ERROR_RESPONSES, **FORBIDDEN_RESPONSE, **CONFLICT_RESPONSE, *
 router.add_api_route("", create_route, methods=["POST"], response_model=CommonResponse[CreateDeceptionEnvironmentResponse], responses=errors)
 router.add_api_route("", query_route, methods=["GET"], response_model=CommonResponse[QueryDeceptionEnvironmentsResponse], responses=COMMON_ERROR_RESPONSES)
 router.add_api_route("/{id}", get_route, methods=["GET"], response_model=CommonResponse[DeceptionEnvironmentSchema], responses=errors)
+router.add_api_route("/{id}/session", session_route, methods=["GET"], response_model=CommonResponse[AgentSessionSummarySchema], responses=errors)
 router.add_api_route("/{id}/references", references_route, methods=["GET"], response_model=CommonResponse[DeceptionReferenceBundleSchema], responses=errors)
 router.add_api_route("/{id}", update_route, methods=["PATCH"], response_model=CommonResponse[DeceptionEnvironmentSchema], responses=errors)
 for action, status in (("pause", DeceptionEnvironmentStatus.PAUSED), ("resume", DeceptionEnvironmentStatus.ACTIVE), ("retire", DeceptionEnvironmentStatus.RETIRED)):

@@ -27,6 +27,7 @@ from service.deception.environments import (
     create_deception_artifact,
     decide_deception_revision,
     get_deception_environment_for_user,
+    get_deception_environment_session_for_user,
     evaluate_deception_revision,
     get_deception_references_for_user,
     plan_deception_revision,
@@ -97,11 +98,18 @@ async def create_deception_environment_handler(
         _raise_environment_error(result)
     if not result.session_id or result.references is None:
         raise RuntimeError("deception environment creation did not produce its Console context")
+    console_session = await get_deception_environment_session_for_user(
+        result.environment.id,
+        user_id=user.id,
+        user_role=user.role,
+    )
+    if console_session is None:
+        raise RuntimeError("deception environment Console session is unavailable")
     return CommonResponse(
         message="deception environment context created; continue in the Console",
         data=CreateDeceptionEnvironmentResponse(
             environment=result.environment,
-            session_id=result.session_id,
+            session=console_session,
             references=result.references,
         ),
     )
@@ -112,6 +120,17 @@ async def get_deception_environment_handler(id: int, user: AuthUser):
     if environment is None:
         raise_api_error(HTTPStatus.NOT_FOUND, "deception environment not found")
     return CommonResponse(data=environment)
+
+
+async def get_deception_environment_session_handler(id: int, user: AuthUser):
+    console_session = await get_deception_environment_session_for_user(
+        id,
+        user_id=user.id,
+        user_role=user.role,
+    )
+    if console_session is None:
+        raise_api_error(HTTPStatus.NOT_FOUND, "deception environment Console session not found")
+    return CommonResponse(data=console_session)
 
 
 async def get_deception_references_handler(id: int, user: AuthUser):

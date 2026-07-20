@@ -3,7 +3,7 @@ from starlette.responses import StreamingResponse
 
 from handler.sandbox.containers import (
     create_sandbox_container_handler,
-    delete_sandbox_container_handler,
+    remove_sandbox_container_handler,
     handle_container_shell_stream,
     handle_copy_files,
     handle_delete_files,
@@ -43,7 +43,7 @@ from schema.sandbox.containers import (
     ContainerFileUploadResponse,
     ContainerFileWriteRequest,
     CreateSandboxContainerRequest,
-    DeleteSandboxContainerResponse,
+    RemoveSandboxContainerResponse,
     ListContainerFilesResponse,
     QuerySandboxContainerHostOptionsResponse,
     QuerySandboxContainerImageOptionsResponse,
@@ -131,11 +131,11 @@ async def query_sandbox_container_image_options_route(
     return await query_sandbox_container_image_options_handler(page, size, keyword)
 
 
-async def delete_sandbox_container_route(
+async def remove_sandbox_container_route(
     id: int,
     user: AuthUser = Depends(require_user),
-) -> CommonResponse[DeleteSandboxContainerResponse]:
-    return await delete_sandbox_container_handler(id=id, user=user)
+) -> CommonResponse[RemoveSandboxContainerResponse]:
+    return await remove_sandbox_container_handler(id=id, user=user)
 
 
 async def start_sandbox_container_route(
@@ -208,10 +208,10 @@ router.add_api_route(
 )
 
 router.add_api_route(
-    "/{id}",
-    delete_sandbox_container_route,
-    methods=["DELETE"],
-    response_model=CommonResponse[DeleteSandboxContainerResponse],
+    "/{id}/remove",
+    remove_sandbox_container_route,
+    methods=["POST"],
+    response_model=CommonResponse[RemoveSandboxContainerResponse],
     responses={**COMMON_ERROR_RESPONSES, **FORBIDDEN_RESPONSE, **NOT_FOUND_RESPONSE},
 )
 

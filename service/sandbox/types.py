@@ -1,11 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal
-
 from schema.sandbox.containers import SandboxContainerEgressMode, SandboxContainerStatus
-
-
-SandboxContainerProtocol = Literal["tcp", "udp"]
 
 
 @dataclass(frozen=True)
@@ -24,8 +19,10 @@ class SandboxContainerSnapshot:
     provisioned_for_revision_id: int | None
     port_mappings: tuple[dict[str, object], ...]
     status: SandboxContainerStatus
+    generation: int
     created_at: datetime
     updated_at: datetime
+    removed_at: datetime | None
 
 
 @dataclass(frozen=True)

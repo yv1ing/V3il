@@ -4,6 +4,7 @@ from enum import StrEnum
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from schema.common.responses import PaginatedResponse
+from schema.common.resources import ResourceLifecycleStatus
 
 
 # canonical system user role; reused by the model and by the public schema
@@ -17,12 +18,14 @@ class SystemUserSchema(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    status: ResourceLifecycleStatus
     role: SystemUserRole
     email: str
     username: str
     password: str
     created_at: datetime
     updated_at: datetime
+    retired_at: datetime | None
 
 
 # create system user request schema
@@ -43,8 +46,7 @@ class CreateSystemUserRequest(BaseModel):
         return value.strip().casefold() if isinstance(value, str) else value
 
 
-# delete system user response schema (presence implies success; status code carries the failure case)
-class DeleteSystemUserResponse(BaseModel):
+class RetireSystemUserResponse(BaseModel):
     id: int
 
 

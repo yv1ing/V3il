@@ -1,12 +1,13 @@
 import { Input, InputNumber, Select } from "@douyinfe/semi-ui";
 import { KeyRound, Network, Server, User } from "lucide-react";
 import { useEffect, useState } from "react";
-import { EGRESS_PROXY_TYPE, EGRESS_PROXY_TYPE_VALUES } from "../../shared/api/generated/constants";
+import { EGRESS_PROXY_TYPE, EGRESS_PROXY_TYPE_VALUES, FIELD_CONSTRAINTS } from "../../shared/api/generated/constants";
 import type { CreateEgressProxyRequest, EgressProxy, UpdateEgressProxyRequest } from "../../shared/api/types";
 import { FormField } from "../../shared/components/FormField";
 import { ResourceModal } from "../../shared/components/ResourceModal";
 
 type EgressProxyFormValues = CreateEgressProxyRequest;
+const PROXY_CONSTRAINTS = FIELD_CONSTRAINTS.CreateEgressProxyRequest;
 
 type EgressProxyFormModalProps = {
   open: boolean;
@@ -84,24 +85,24 @@ export function EgressProxyFormModal({ open, proxy, saving, onCancel, onCreate, 
         />
       </FormField>
       <FormField label="Proxy Host">
-        <Input prefix={<Server size={16} />} value={values.proxy_host} maxLength={255} required
+        <Input prefix={<Server size={16} />} value={values.proxy_host} maxLength={PROXY_CONSTRAINTS.proxy_host.maxLength} required
           autoComplete="off"
           onChange={(proxy_host) => setValues((current) => ({ ...current, proxy_host }))}
         />
       </FormField>
       <FormField label="Proxy Port">
-        <InputNumber prefix={<Network size={16} />} value={values.proxy_port} min={1} max={65535}
+        <InputNumber prefix={<Network size={16} />} value={values.proxy_port} min={PROXY_CONSTRAINTS.proxy_port.minimum} max={PROXY_CONSTRAINTS.proxy_port.maximum}
           onChange={(proxy_port) => typeof proxy_port === "number" && setValues((current) => ({ ...current, proxy_port }))}
         />
       </FormField>
       <FormField label="Proxy Account">
-        <Input prefix={<User size={16} />} value={values.proxy_account} maxLength={255}
+        <Input prefix={<User size={16} />} value={values.proxy_account} maxLength={PROXY_CONSTRAINTS.proxy_account.maxLength}
           autoComplete="off"
           onChange={(proxy_account) => setValues((current) => ({ ...current, proxy_account }))}
         />
       </FormField>
       <FormField label="Proxy Password">
-        <Input mode="password" prefix={<KeyRound size={16} />} value={values.proxy_password} maxLength={512}
+        <Input mode="password" prefix={<KeyRound size={16} />} value={values.proxy_password} maxLength={PROXY_CONSTRAINTS.proxy_password.maxLength}
           autoComplete="new-password"
           onChange={(proxy_password) => setValues((current) => ({ ...current, proxy_password }))}
         />

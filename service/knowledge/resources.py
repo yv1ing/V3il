@@ -45,6 +45,8 @@ _SOURCE_CLEANUP_RETRY_SECONDS = 0.25
 _VECTOR_DOCUMENT_SCAN_PAGE_SIZE = 200
 _GRAPH_DIRECT_MATCH_LIMIT = 50
 _GRAPH_DIRECT_MATCH_DEPTH = 1
+_GENERATED_DOCUMENT_POLL_SECONDS = 1.0
+_GENERATED_DOCUMENT_TIMEOUT_SECONDS = 600
 
 logger = get_logger(__name__)
 
@@ -261,26 +263,59 @@ async def enqueue_generated_knowledge_markdown(
     workspace_dir.mkdir(parents=True, exist_ok=True)
     source_path = workspace_dir / canonical_name
     async with lightrag_client() as rag:
-        if await rag.doc_status.get_doc_by_file_basename(canonical_name) is not None:
+        existing_document = await rag.doc_status.get_doc_by_file_basename(canonical_name)
+    if existing_document is not None:
+        document_id, document = existing_document
+        status = _document_status(document)
+        if status == DocStatus.PROCESSED:
             return None
-        if source_path.exists():
-            existing = await asyncio.to_thread(source_path.read_bytes)
-            if existing != payload:
-                raise KnowledgeDocumentError("generated knowledge source content conflicts with a pending file")
-        else:
-            await asyncio.to_thread(_write_new_document, source_path, payload)
-        try:
+        if status != DocStatus.FAILED:
+            track_id = _optional_text(_document_field(document, "track_id"))
+            if track_id is None:
+                raise KnowledgeDocumentError("generated knowledge document has no processing track")
+            return track_id
+        deletion = await delete_knowledge_document(document_id)
+        if deletion.status != "success":
+            raise KnowledgeDocumentError("failed generated knowledge document could not be reset")
+
+    if source_path.exists():
+        existing = await asyncio.to_thread(source_path.read_bytes)
+        if existing != payload:
+            raise KnowledgeDocumentError("generated knowledge source content conflicts with a pending file")
+    else:
+        await asyncio.to_thread(_write_new_document, source_path, payload)
+    try:
+        async with lightrag_client() as rag:
             track_id = await rag.apipeline_enqueue_documents(
                 [""],
                 file_paths=[canonical_name],
                 docs_format=FULL_DOCS_FORMAT_PENDING_PARSE,
             )
-        except BaseException as exc:
-            await _remove_source_document(source_path, original_error=exc)
-            raise
+    except BaseException as exc:
+        await _remove_source_document(source_path, original_error=exc)
+        raise
     if track_id is None:
         await _remove_source_document(source_path)
     return track_id
+
+
+async def wait_for_generated_knowledge_markdown(file_name: str) -> None:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _GENERATED_DOCUMENT_TIMEOUT_SECONDS
+    while True:
+        async with lightrag_client() as rag:
+            row = await rag.doc_status.get_doc_by_file_basename(file_name)
+        if row is not None:
+            _, document = row
+            status = _document_status(document)
+            if status == DocStatus.PROCESSED:
+                return
+            if status == DocStatus.FAILED:
+                error = _optional_text(_document_field(document, "error_msg"))
+                raise KnowledgeDocumentError(error or "generated knowledge document processing failed")
+        if loop.time() >= deadline:
+            raise KnowledgeDocumentError("generated knowledge document processing timed out")
+        await asyncio.sleep(_GENERATED_DOCUMENT_POLL_SECONDS)
 
 
 def _display_upload_file_name(upload: UploadFile) -> str:
@@ -463,6 +498,11 @@ def _document_field(document: Any, field: str, default: Any = None) -> Any:
     if isinstance(document, dict):
         return document.get(field, default)
     return getattr(document, field, default)
+
+
+def _document_status(document: Any) -> DocStatus:
+    value = _document_field(document, "status")
+    return value if isinstance(value, DocStatus) else DocStatus(str(value))
 
 
 def _optional_text(value: Any) -> str | None:

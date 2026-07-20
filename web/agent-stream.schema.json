@@ -1,0 +1,1617 @@
+{
+  "$defs": {
+    "AgentAckFrame": {
+      "properties": {
+        "durable_seq": {
+          "minimum": 0,
+          "title": "Durable Seq",
+          "type": "integer"
+        },
+        "type": {
+          "const": "ack",
+          "default": "ack",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "durable_seq"
+      ],
+      "title": "AgentAckFrame",
+      "type": "object"
+    },
+    "AgentAttemptStatus": {
+      "enum": [
+        "running",
+        "succeeded",
+        "failed",
+        "canceled",
+        "interrupted"
+      ],
+      "title": "AgentAttemptStatus",
+      "type": "string"
+    },
+    "AgentCancellationMode": {
+      "enum": [
+        "interrupt",
+        "cancel"
+      ],
+      "title": "AgentCancellationMode",
+      "type": "string"
+    },
+    "AgentClientFrame": {
+      "discriminator": {
+        "mapping": {
+          "ack": "#/$defs/AgentAckFrame",
+          "ping": "#/$defs/AgentPingFrame"
+        },
+        "propertyName": "type"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/AgentAckFrame"
+        },
+        {
+          "$ref": "#/$defs/AgentPingFrame"
+        }
+      ]
+    },
+    "AgentCode": {
+      "enum": [
+        "cso",
+        "cth",
+        "cde",
+        "cie",
+        "cir"
+      ],
+      "title": "AgentCode",
+      "type": "string"
+    },
+    "AgentContinuationReadyPayload": {
+      "properties": {
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "agent.continuation.ready",
+          "default": "agent.continuation.ready",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "event_id"
+      ],
+      "title": "AgentContinuationReadyPayload",
+      "type": "object"
+    },
+    "AgentDeltaFrame": {
+      "properties": {
+        "attempt_id": {
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "delta": {
+          "title": "Delta",
+          "type": "string"
+        },
+        "end_utf16_offset": {
+          "description": "Delta end offset measured in UTF-16 code units.",
+          "minimum": 0,
+          "title": "End Utf16 Offset",
+          "type": "integer"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "segment_id": {
+          "title": "Segment Id",
+          "type": "string"
+        },
+        "segment_kind": {
+          "$ref": "#/$defs/AgentSegmentKind"
+        },
+        "start_utf16_offset": {
+          "description": "Delta start offset measured in UTF-16 code units.",
+          "minimum": 0,
+          "title": "Start Utf16 Offset",
+          "type": "integer"
+        },
+        "type": {
+          "const": "delta",
+          "default": "delta",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "attempt_id",
+        "segment_id",
+        "segment_kind",
+        "start_utf16_offset",
+        "end_utf16_offset",
+        "delta"
+      ],
+      "title": "AgentDeltaFrame",
+      "type": "object"
+    },
+    "AgentDurableEvent": {
+      "discriminator": {
+        "mapping": {
+          "attempt_transition": "#/$defs/AttemptTransitionEvent",
+          "delegation": "#/$defs/DelegationEvent",
+          "error": "#/$defs/AgentErrorEvent",
+          "run_transition": "#/$defs/RunTransitionEvent",
+          "sandbox_recovery": "#/$defs/SandboxRecoveryEvent",
+          "segment_completed": "#/$defs/SegmentCompletedEvent",
+          "tool_call": "#/$defs/ToolCallEvent",
+          "tool_recovery": "#/$defs/ToolRecoveryEvent",
+          "tool_result": "#/$defs/ToolResultEvent",
+          "user_message": "#/$defs/UserMessageEvent"
+        },
+        "propertyName": "type"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/UserMessageEvent"
+        },
+        {
+          "$ref": "#/$defs/RunTransitionEvent"
+        },
+        {
+          "$ref": "#/$defs/AttemptTransitionEvent"
+        },
+        {
+          "$ref": "#/$defs/SegmentCompletedEvent"
+        },
+        {
+          "$ref": "#/$defs/ToolCallEvent"
+        },
+        {
+          "$ref": "#/$defs/ToolResultEvent"
+        },
+        {
+          "$ref": "#/$defs/ToolRecoveryEvent"
+        },
+        {
+          "$ref": "#/$defs/SandboxRecoveryEvent"
+        },
+        {
+          "$ref": "#/$defs/DelegationEvent"
+        },
+        {
+          "$ref": "#/$defs/AgentErrorEvent"
+        }
+      ]
+    },
+    "AgentErrorEvent": {
+      "properties": {
+        "attempt_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attempt Id"
+        },
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Run Id"
+        },
+        "seq": {
+          "minimum": 1,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "error",
+          "default": "error",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "session_id",
+        "seq",
+        "occurred_at",
+        "code",
+        "message"
+      ],
+      "title": "AgentErrorEvent",
+      "type": "object"
+    },
+    "AgentEventFrame": {
+      "properties": {
+        "event": {
+          "discriminator": {
+            "mapping": {
+              "attempt_transition": "#/$defs/AttemptTransitionEvent",
+              "delegation": "#/$defs/DelegationEvent",
+              "error": "#/$defs/AgentErrorEvent",
+              "run_transition": "#/$defs/RunTransitionEvent",
+              "sandbox_recovery": "#/$defs/SandboxRecoveryEvent",
+              "segment_completed": "#/$defs/SegmentCompletedEvent",
+              "tool_call": "#/$defs/ToolCallEvent",
+              "tool_recovery": "#/$defs/ToolRecoveryEvent",
+              "tool_result": "#/$defs/ToolResultEvent",
+              "user_message": "#/$defs/UserMessageEvent"
+            },
+            "propertyName": "type"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UserMessageEvent"
+            },
+            {
+              "$ref": "#/$defs/RunTransitionEvent"
+            },
+            {
+              "$ref": "#/$defs/AttemptTransitionEvent"
+            },
+            {
+              "$ref": "#/$defs/SegmentCompletedEvent"
+            },
+            {
+              "$ref": "#/$defs/ToolCallEvent"
+            },
+            {
+              "$ref": "#/$defs/ToolResultEvent"
+            },
+            {
+              "$ref": "#/$defs/ToolRecoveryEvent"
+            },
+            {
+              "$ref": "#/$defs/SandboxRecoveryEvent"
+            },
+            {
+              "$ref": "#/$defs/DelegationEvent"
+            },
+            {
+              "$ref": "#/$defs/AgentErrorEvent"
+            }
+          ],
+          "title": "Event"
+        },
+        "type": {
+          "const": "event",
+          "default": "event",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event"
+      ],
+      "title": "AgentEventFrame",
+      "type": "object"
+    },
+    "AgentHeartbeatFrame": {
+      "properties": {
+        "sent_at": {
+          "format": "date-time",
+          "title": "Sent At",
+          "type": "string"
+        },
+        "type": {
+          "const": "heartbeat",
+          "default": "heartbeat",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sent_at"
+      ],
+      "title": "AgentHeartbeatFrame",
+      "type": "object"
+    },
+    "AgentHelloFrame": {
+      "properties": {
+        "active_run_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Active Run Ids",
+          "type": "array"
+        },
+        "durable_head_seq": {
+          "minimum": 0,
+          "title": "Durable Head Seq",
+          "type": "integer"
+        },
+        "segments": {
+          "items": {
+            "$ref": "#/$defs/AgentSegmentSnapshot"
+          },
+          "title": "Segments",
+          "type": "array"
+        },
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "hello",
+          "default": "hello",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "durable_head_seq"
+      ],
+      "title": "AgentHelloFrame",
+      "type": "object"
+    },
+    "AgentImageDetail": {
+      "enum": [
+        "auto",
+        "low",
+        "high"
+      ],
+      "title": "AgentImageDetail",
+      "type": "string"
+    },
+    "AgentImageInputPart": {
+      "properties": {
+        "data": {
+          "maxLength": 5242880,
+          "minLength": 1,
+          "title": "Data",
+          "type": "string"
+        },
+        "detail": {
+          "$ref": "#/$defs/AgentImageDetail",
+          "default": "auto"
+        },
+        "media_type": {
+          "$ref": "#/$defs/AgentImageMediaType"
+        },
+        "type": {
+          "const": "image",
+          "default": "image",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "media_type",
+        "data"
+      ],
+      "title": "AgentImageInputPart",
+      "type": "object"
+    },
+    "AgentImageMediaType": {
+      "enum": [
+        "image/png",
+        "image/jpeg",
+        "image/webp"
+      ],
+      "title": "AgentImageMediaType",
+      "type": "string"
+    },
+    "AgentPingFrame": {
+      "properties": {
+        "type": {
+          "const": "ping",
+          "default": "ping",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "title": "AgentPingFrame",
+      "type": "object"
+    },
+    "AgentRebaseRequiredFrame": {
+      "properties": {
+        "durable_head_seq": {
+          "minimum": 0,
+          "title": "Durable Head Seq",
+          "type": "integer"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "type": {
+          "const": "rebase_required",
+          "default": "rebase_required",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "durable_head_seq",
+        "reason"
+      ],
+      "title": "AgentRebaseRequiredFrame",
+      "type": "object"
+    },
+    "AgentReplayFrame": {
+      "properties": {
+        "durable_head_seq": {
+          "minimum": 0,
+          "title": "Durable Head Seq",
+          "type": "integer"
+        },
+        "events": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "attempt_transition": "#/$defs/AttemptTransitionEvent",
+                "delegation": "#/$defs/DelegationEvent",
+                "error": "#/$defs/AgentErrorEvent",
+                "run_transition": "#/$defs/RunTransitionEvent",
+                "sandbox_recovery": "#/$defs/SandboxRecoveryEvent",
+                "segment_completed": "#/$defs/SegmentCompletedEvent",
+                "tool_call": "#/$defs/ToolCallEvent",
+                "tool_recovery": "#/$defs/ToolRecoveryEvent",
+                "tool_result": "#/$defs/ToolResultEvent",
+                "user_message": "#/$defs/UserMessageEvent"
+              },
+              "propertyName": "type"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/UserMessageEvent"
+              },
+              {
+                "$ref": "#/$defs/RunTransitionEvent"
+              },
+              {
+                "$ref": "#/$defs/AttemptTransitionEvent"
+              },
+              {
+                "$ref": "#/$defs/SegmentCompletedEvent"
+              },
+              {
+                "$ref": "#/$defs/ToolCallEvent"
+              },
+              {
+                "$ref": "#/$defs/ToolResultEvent"
+              },
+              {
+                "$ref": "#/$defs/ToolRecoveryEvent"
+              },
+              {
+                "$ref": "#/$defs/SandboxRecoveryEvent"
+              },
+              {
+                "$ref": "#/$defs/DelegationEvent"
+              },
+              {
+                "$ref": "#/$defs/AgentErrorEvent"
+              }
+            ]
+          },
+          "title": "Events",
+          "type": "array"
+        },
+        "type": {
+          "const": "replay",
+          "default": "replay",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "events",
+        "durable_head_seq"
+      ],
+      "title": "AgentReplayFrame",
+      "type": "object"
+    },
+    "AgentRunCancelPayload": {
+      "properties": {
+        "actor": {
+          "title": "Actor",
+          "type": "string"
+        },
+        "mode": {
+          "$ref": "#/$defs/AgentCancellationMode"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "agent.run.cancel",
+          "default": "agent.run.cancel",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "mode",
+        "actor"
+      ],
+      "title": "AgentRunCancelPayload",
+      "type": "object"
+    },
+    "AgentRunReadyPayload": {
+      "properties": {
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "agent.run.ready",
+          "default": "agent.run.ready",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "event_id"
+      ],
+      "title": "AgentRunReadyPayload",
+      "type": "object"
+    },
+    "AgentRunStatus": {
+      "enum": [
+        "queued",
+        "running",
+        "waiting",
+        "succeeded",
+        "failed",
+        "canceled"
+      ],
+      "title": "AgentRunStatus",
+      "type": "string"
+    },
+    "AgentSegmentKind": {
+      "enum": [
+        "text",
+        "thinking"
+      ],
+      "title": "AgentSegmentKind",
+      "type": "string"
+    },
+    "AgentSegmentSnapshot": {
+      "properties": {
+        "attempt_id": {
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "persisted_utf16_offset": {
+          "description": "Persisted text length measured in UTF-16 code units.",
+          "minimum": 0,
+          "title": "Persisted Utf16 Offset",
+          "type": "integer"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "segment_id": {
+          "title": "Segment Id",
+          "type": "string"
+        },
+        "segment_kind": {
+          "$ref": "#/$defs/AgentSegmentKind"
+        },
+        "status": {
+          "$ref": "#/$defs/AgentSegmentStatus"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "segment_id",
+        "run_id",
+        "attempt_id",
+        "segment_kind",
+        "status",
+        "text",
+        "persisted_utf16_offset"
+      ],
+      "title": "AgentSegmentSnapshot",
+      "type": "object"
+    },
+    "AgentSegmentStatus": {
+      "enum": [
+        "streaming",
+        "completed",
+        "interrupted"
+      ],
+      "title": "AgentSegmentStatus",
+      "type": "string"
+    },
+    "AgentServerFrame": {
+      "discriminator": {
+        "mapping": {
+          "delta": "#/$defs/AgentDeltaFrame",
+          "error": "#/$defs/AgentStreamErrorFrame",
+          "event": "#/$defs/AgentEventFrame",
+          "heartbeat": "#/$defs/AgentHeartbeatFrame",
+          "hello": "#/$defs/AgentHelloFrame",
+          "rebase_required": "#/$defs/AgentRebaseRequiredFrame",
+          "replay": "#/$defs/AgentReplayFrame"
+        },
+        "propertyName": "type"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/AgentHelloFrame"
+        },
+        {
+          "$ref": "#/$defs/AgentReplayFrame"
+        },
+        {
+          "$ref": "#/$defs/AgentEventFrame"
+        },
+        {
+          "$ref": "#/$defs/AgentDeltaFrame"
+        },
+        {
+          "$ref": "#/$defs/AgentRebaseRequiredFrame"
+        },
+        {
+          "$ref": "#/$defs/AgentHeartbeatFrame"
+        },
+        {
+          "$ref": "#/$defs/AgentStreamErrorFrame"
+        }
+      ]
+    },
+    "AgentSessionCancelPayload": {
+      "properties": {
+        "actor": {
+          "title": "Actor",
+          "type": "string"
+        },
+        "mode": {
+          "$ref": "#/$defs/AgentCancellationMode"
+        },
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "agent.session.cancel",
+          "default": "agent.session.cancel",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "mode",
+        "actor"
+      ],
+      "title": "AgentSessionCancelPayload",
+      "type": "object"
+    },
+    "AgentStreamErrorFrame": {
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "type": {
+          "const": "error",
+          "default": "error",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "AgentStreamErrorFrame",
+      "type": "object"
+    },
+    "AgentTextInputPart": {
+      "properties": {
+        "text": {
+          "maxLength": 20000,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        },
+        "type": {
+          "const": "text",
+          "default": "text",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "AgentTextInputPart",
+      "type": "object"
+    },
+    "AgentToolInvocationStatus": {
+      "enum": [
+        "running",
+        "succeeded",
+        "recovery_required",
+        "not_applied"
+      ],
+      "title": "AgentToolInvocationStatus",
+      "type": "string"
+    },
+    "AttemptTransitionEvent": {
+      "properties": {
+        "attempt_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attempt Id"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "previous_status": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentAttemptStatus"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Run Id"
+        },
+        "seq": {
+          "minimum": 1,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/AgentAttemptStatus"
+        },
+        "type": {
+          "const": "attempt_transition",
+          "default": "attempt_transition",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "session_id",
+        "seq",
+        "occurred_at",
+        "status"
+      ],
+      "title": "AttemptTransitionEvent",
+      "type": "object"
+    },
+    "DelegationEvent": {
+      "properties": {
+        "attempt_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attempt Id"
+        },
+        "child_agent_code": {
+          "$ref": "#/$defs/AgentCode"
+        },
+        "child_run_id": {
+          "title": "Child Run Id",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "parent_agent_code": {
+          "$ref": "#/$defs/AgentCode"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Run Id"
+        },
+        "seq": {
+          "minimum": 1,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/AgentRunStatus"
+        },
+        "summary": {
+          "default": "",
+          "title": "Summary",
+          "type": "string"
+        },
+        "type": {
+          "const": "delegation",
+          "default": "delegation",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "session_id",
+        "seq",
+        "occurred_at",
+        "child_run_id",
+        "parent_agent_code",
+        "child_agent_code",
+        "status"
+      ],
+      "title": "DelegationEvent",
+      "type": "object"
+    },
+    "JsonValue": {},
+    "KnowledgePublicationReadyPayload": {
+      "properties": {
+        "artifact_sha256": {
+          "title": "Artifact Sha256",
+          "type": "string"
+        },
+        "report_id": {
+          "title": "Report Id",
+          "type": "integer"
+        },
+        "type": {
+          "const": "knowledge.publication.ready",
+          "default": "knowledge.publication.ready",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "report_id",
+        "artifact_sha256"
+      ],
+      "title": "KnowledgePublicationReadyPayload",
+      "type": "object"
+    },
+    "OutboxPayload": {
+      "discriminator": {
+        "mapping": {
+          "agent.continuation.ready": "#/$defs/AgentContinuationReadyPayload",
+          "agent.run.cancel": "#/$defs/AgentRunCancelPayload",
+          "agent.run.ready": "#/$defs/AgentRunReadyPayload",
+          "agent.session.cancel": "#/$defs/AgentSessionCancelPayload",
+          "knowledge.publication.ready": "#/$defs/KnowledgePublicationReadyPayload"
+        },
+        "propertyName": "type"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/AgentRunReadyPayload"
+        },
+        {
+          "$ref": "#/$defs/AgentContinuationReadyPayload"
+        },
+        {
+          "$ref": "#/$defs/AgentRunCancelPayload"
+        },
+        {
+          "$ref": "#/$defs/AgentSessionCancelPayload"
+        },
+        {
+          "$ref": "#/$defs/KnowledgePublicationReadyPayload"
+        }
+      ]
+    },
+    "RunTransitionEvent": {
+      "properties": {
+        "attempt_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attempt Id"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "previous_status": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentRunStatus"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Run Id"
+        },
+        "seq": {
+          "minimum": 1,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/AgentRunStatus"
+        },
+        "type": {
+          "const": "run_transition",
+          "default": "run_transition",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "session_id",
+        "seq",
+        "occurred_at",
+        "status"
+      ],
+      "title": "RunTransitionEvent",
+      "type": "object"
+    },
+    "SandboxAsyncJobStatus": {
+      "enum": [
+        "queued",
+        "running",
+        "completed",
+        "failed",
+        "canceled",
+        "recovery_required"
+      ],
+      "title": "SandboxAsyncJobStatus",
+      "type": "string"
+    },
+    "SandboxRecoveryEvent": {
+      "properties": {
+        "attempt_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attempt Id"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "resolution_note": {
+          "title": "Resolution Note",
+          "type": "string"
+        },
+        "resolved_by": {
+          "title": "Resolved By",
+          "type": "string"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Run Id"
+        },
+        "sandbox_job_id": {
+          "title": "Sandbox Job Id",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 1,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/SandboxAsyncJobStatus"
+        },
+        "type": {
+          "const": "sandbox_recovery",
+          "default": "sandbox_recovery",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "session_id",
+        "seq",
+        "occurred_at",
+        "sandbox_job_id",
+        "status",
+        "resolved_by",
+        "resolution_note"
+      ],
+      "title": "SandboxRecoveryEvent",
+      "type": "object"
+    },
+    "SegmentCompletedEvent": {
+      "properties": {
+        "agent_code": {
+          "$ref": "#/$defs/AgentCode"
+        },
+        "attempt_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attempt Id"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Run Id"
+        },
+        "segment_id": {
+          "title": "Segment Id",
+          "type": "string"
+        },
+        "segment_kind": {
+          "$ref": "#/$defs/AgentSegmentKind"
+        },
+        "seq": {
+          "minimum": 1,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/AgentSegmentStatus"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "type": {
+          "const": "segment_completed",
+          "default": "segment_completed",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "session_id",
+        "seq",
+        "occurred_at",
+        "segment_id",
+        "segment_kind",
+        "status",
+        "agent_code",
+        "text"
+      ],
+      "title": "SegmentCompletedEvent",
+      "type": "object"
+    },
+    "ToolCallEvent": {
+      "properties": {
+        "agent_code": {
+          "$ref": "#/$defs/AgentCode"
+        },
+        "arguments": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Arguments",
+          "type": "object"
+        },
+        "attempt_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attempt Id"
+        },
+        "call_id": {
+          "title": "Call Id",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Run Id"
+        },
+        "seq": {
+          "minimum": 1,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "tool_call",
+          "default": "tool_call",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "session_id",
+        "seq",
+        "occurred_at",
+        "call_id",
+        "agent_code",
+        "name"
+      ],
+      "title": "ToolCallEvent",
+      "type": "object"
+    },
+    "ToolRecoveryEvent": {
+      "properties": {
+        "agent_code": {
+          "$ref": "#/$defs/AgentCode"
+        },
+        "attempt_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attempt Id"
+        },
+        "call_id": {
+          "title": "Call Id",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "invocation_id": {
+          "title": "Invocation Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "resolution_note": {
+          "title": "Resolution Note",
+          "type": "string"
+        },
+        "resolved_by": {
+          "title": "Resolved By",
+          "type": "string"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Run Id"
+        },
+        "seq": {
+          "minimum": 1,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/AgentToolInvocationStatus"
+        },
+        "type": {
+          "const": "tool_recovery",
+          "default": "tool_recovery",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "session_id",
+        "seq",
+        "occurred_at",
+        "invocation_id",
+        "call_id",
+        "agent_code",
+        "status",
+        "resolved_by",
+        "resolution_note"
+      ],
+      "title": "ToolRecoveryEvent",
+      "type": "object"
+    },
+    "ToolResultEvent": {
+      "properties": {
+        "agent_code": {
+          "$ref": "#/$defs/AgentCode"
+        },
+        "attempt_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attempt Id"
+        },
+        "call_id": {
+          "title": "Call Id",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "is_error": {
+          "default": false,
+          "title": "Is Error",
+          "type": "boolean"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "output": {
+          "default": "",
+          "title": "Output",
+          "type": "string"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Run Id"
+        },
+        "seq": {
+          "minimum": 1,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "tool_result",
+          "default": "tool_result",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "session_id",
+        "seq",
+        "occurred_at",
+        "call_id",
+        "agent_code"
+      ],
+      "title": "ToolResultEvent",
+      "type": "object"
+    },
+    "UserMessageEvent": {
+      "properties": {
+        "agent_code": {
+          "$ref": "#/$defs/AgentCode"
+        },
+        "attempt_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attempt Id"
+        },
+        "content": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "image": "#/$defs/AgentImageInputPart",
+                "text": "#/$defs/AgentTextInputPart"
+              },
+              "propertyName": "type"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/AgentTextInputPart"
+              },
+              {
+                "$ref": "#/$defs/AgentImageInputPart"
+              }
+            ]
+          },
+          "title": "Content",
+          "type": "array"
+        },
+        "display_text": {
+          "title": "Display Text",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Run Id"
+        },
+        "seq": {
+          "minimum": 1,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "user_message",
+          "default": "user_message",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "session_id",
+        "seq",
+        "occurred_at",
+        "agent_code",
+        "content",
+        "display_text"
+      ],
+      "title": "UserMessageEvent",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Bidirectional stream frames, durable events, and runtime Outbox commands.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/AgentServerFrame"
+    },
+    {
+      "$ref": "#/$defs/AgentClientFrame"
+    }
+  ],
+  "title": "V3il Agent Runtime Contract",
+  "x-v3il-roots": {
+    "AgentClientFrame": "#/$defs/AgentClientFrame",
+    "AgentDurableEvent": "#/$defs/AgentDurableEvent",
+    "AgentServerFrame": "#/$defs/AgentServerFrame",
+    "OutboxPayload": "#/$defs/OutboxPayload"
+  }
+}

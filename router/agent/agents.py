@@ -1,22 +1,14 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from handler.agent.agents import list_agents_handler
 from middleware.system_user import require_user
 from router.common.responses import COMMON_ERROR_RESPONSES
 from schema.agent.sessions import ListAgentsResponse
-from schema.common.responses import CommonResponse
 
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
-USER_ONLY = [Depends(require_user)]
 
-
-router.add_api_route(
-    "",
-    list_agents_handler,
-    methods=["GET"],
-    dependencies=USER_ONLY,
-    response_model=CommonResponse[ListAgentsResponse],
-    responses=COMMON_ERROR_RESPONSES,
-)
+@router.get("", dependencies=[Depends(require_user)], response_model=ListAgentsResponse, responses=COMMON_ERROR_RESPONSES)
+async def list_agents_route(request: Request) -> ListAgentsResponse:
+    return await list_agents_handler(request)

@@ -22,8 +22,8 @@ features:
     details: Design attacker-facing environments from natural-language goals and reference material, then deploy, verify, and adapt them through versioned changes.
   - title: Behavior And Detection
     details: Combine layered telemetry with Zeek signals and organize related activity in a continuous, traceable Incident timeline.
-  - title: Multi-Agent Investigation
-    details: Five fixed roles collaborate through scoped tasks, evidence, and review to develop intent, attack chains, profiles, and risk.
+  - title: Agent Defense Team
+    details: Five fixed roles collaborate through durable Sessions, scoped Runs, evidence, and review to develop intent, attack chains, profiles, and risk.
   - title: Intelligence Delivery
     details: Turn investigation results into response guidance, reports, evidence packages, and searchable knowledge.
 ---

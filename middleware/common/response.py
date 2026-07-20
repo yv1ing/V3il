@@ -6,62 +6,75 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from logger import get_logger
-from schema.common.responses import CommonResponse
+from schema.common.problems import ProblemDetails, ProblemViolation
 
 
 logger = get_logger(__name__)
 
 
-def _serialize_validation_errors(errors: list[dict]) -> list[dict]:
-    serialized_errors: list[dict] = []
-    for error in errors:
-        serialized_error = dict(error)
-        ctx = serialized_error.get("ctx")
-        if isinstance(ctx, dict):
-            serialized_error["ctx"] = {key: str(value) for key, value in ctx.items()}
-        serialized_errors.append(serialized_error)
-    return serialized_errors
+def problem_response(
+    problem: ProblemDetails,
+    *,
+    headers: dict[str, str] | None = None,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=problem.status,
+        content=problem.model_dump(mode="json"),
+        headers=headers,
+        media_type="application/problem+json",
+    )
 
 
 async def request_validation_exception_handler(
-    _: Request,
+    request: Request,
     exc: RequestValidationError,
 ) -> JSONResponse:
-    """Wrap request validation errors in CommonResponse."""
-    return JSONResponse(
-        status_code=422,
-        content=CommonResponse(
-            code=422,
-            message="request validation failed",
-            data=_serialize_validation_errors(exc.errors()),
-        ).model_dump(),
+    problem = ProblemDetails(
+        type="https://v3il.dev/problems/request-validation",
+        title="Request validation failed",
+        status=HTTPStatus.UNPROCESSABLE_ENTITY,
+        detail="One or more request fields are invalid.",
+        instance=request.url.path,
+        error_code="request_validation_failed",
+        violations=[ProblemViolation(
+            location=list(error.get("loc", ())),
+            message=str(error.get("msg", "invalid value")),
+            code=str(error.get("type", "validation_error")),
+        ) for error in exc.errors()],
     )
+    return problem_response(problem)
 
 
-async def http_exception_handler(_: Request, exc: StarletteHTTPException) -> JSONResponse:
-    """Wrap framework HTTP errors in CommonResponse."""
-    return JSONResponse(
-        status_code=exc.status_code,
-        content=CommonResponse(
-            code=exc.status_code,
-            message=str(exc.detail),
-        ).model_dump(),
-        headers=exc.headers,
+async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+    try:
+        status = HTTPStatus(exc.status_code)
+        title = status.phrase
+    except ValueError:
+        title = "HTTP error"
+    problem = ProblemDetails(
+        type=f"https://v3il.dev/problems/http-{exc.status_code}",
+        title=title,
+        status=exc.status_code,
+        detail=str(exc.detail),
+        instance=request.url.path,
+        error_code=f"http_{exc.status_code}",
     )
+    return problem_response(problem, headers=exc.headers)
 
 
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """Log unexpected API failures and return the public CommonResponse shape."""
     logger.error(
         "unhandled request failed: %s %s",
         request.method,
         request.url.path,
         exc_info=(type(exc), exc, exc.__traceback__),
     )
-    return JSONResponse(
-        status_code=HTTPStatus.INTERNAL_SERVER_ERROR.value,
-        content=CommonResponse(
-            code=HTTPStatus.INTERNAL_SERVER_ERROR.value,
-            message="internal server error",
-        ).model_dump(),
+    problem = ProblemDetails(
+        type="https://v3il.dev/problems/internal-error",
+        title="Internal Server Error",
+        status=HTTPStatus.INTERNAL_SERVER_ERROR,
+        detail="The request could not be completed.",
+        instance=request.url.path,
+        error_code="internal_error",
     )
+    return problem_response(problem)

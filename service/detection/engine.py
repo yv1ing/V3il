@@ -3,13 +3,15 @@ from __future__ import annotations
 import json
 import hashlib
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import timedelta
 from functools import lru_cache
 from typing import Any
 
 import regex
 from sqlalchemy import func, or_, text
 from sqlmodel import select
+
+from utils.time import utc_now
 
 from database import get_async_session
 from model.deception.environments import DeceptionEnvironment
@@ -28,9 +30,14 @@ from schema.detection.rules import (
     BehaviorDecisionSchema,
     BehaviorSignalSchema,
     BehaviorSignalStatus,
+    CentralDetectionRuleReplayResult,
     CentralRuleDefinition,
+    DetectionReplayClassificationCount,
+    DetectionRuleReplayResult,
     DetectionRuleScope,
     DetectionRuleType,
+    MatchedDetectionRuleVersion,
+    SensorDetectionRuleReplayResult,
     SuppressionRuleDefinition,
 )
 from schema.system_user.users import SystemUserRole
@@ -78,29 +85,45 @@ async def process_behavior_events(environment_id: int, event_ids: list[int]) -> 
     return sorted(actionable)
 
 
-async def replay_rule(session, rule: DetectionRule, version: DetectionRuleVersion, event_ids: list[int]) -> dict[str, Any]:
+async def replay_rule(
+    session,
+    rule: DetectionRule,
+    version: DetectionRuleVersion,
+    event_ids: list[int],
+) -> DetectionRuleReplayResult:
     if rule.type not in {DetectionRuleType.CENTRAL_RULE, DetectionRuleType.SUPPRESSION}:
-        return {"evaluated": 0, "matched": 0, "note": "PCAP validation is completed by the Zeek deployment validator."}
+        return SensorDetectionRuleReplayResult(
+            note="PCAP validation is completed by the Zeek deployment validator.",
+        )
     events = list((await session.exec(select(BehaviorEvent).where(BehaviorEvent.id.in_(list(dict.fromkeys(event_ids)))))).all())
     matched = 0
     score_counts: Counter[str] = Counter()
     if rule.type == DetectionRuleType.CENTRAL_RULE:
-        definition = CentralRuleDefinition.model_validate(parsed_rule_content(rule.type, version.content))
+        definition = parsed_rule_content(rule.type, version.content)
+        if not isinstance(definition, CentralRuleDefinition):
+            raise RuntimeError("central rule parsed as an unexpected definition type")
         for event in events:
             if _rule_matches(definition.all, definition.any, event):
                 matched += 1
                 score_counts[definition.classification.value] += 1
     else:
-        definition = SuppressionRuleDefinition.model_validate(parsed_rule_content(rule.type, version.content))
+        definition = parsed_rule_content(rule.type, version.content)
+        if not isinstance(definition, SuppressionRuleDefinition):
+            raise RuntimeError("suppression rule parsed as an unexpected definition type")
         for event in events:
             if _rule_matches(definition.all, [], event):
                 matched += 1
-    return {
-        "evaluated": len(events),
-        "matched": matched,
-        "classifications": dict(score_counts),
-        "replay_only": True,
-    }
+    return CentralDetectionRuleReplayResult(
+        evaluated=len(events),
+        matched=matched,
+        classifications=[
+            DetectionReplayClassificationCount(
+                classification=BehaviorClassification(classification),
+                count=count,
+            )
+            for classification, count in sorted(score_counts.items())
+        ],
+    )
 
 
 async def query_decisions(*, page=1, size=RESOURCE_PAGE_SIZE, classification=None, environment_id=None, user_id: int, user_role: SystemUserRole) -> Page[BehaviorDecisionSchema]:
@@ -141,14 +164,18 @@ async def _evaluate_event(session, event: BehaviorEvent, *, mode: BehaviorDecisi
     central, suppressions = await _load_effective_rules(session, event)
     matches: list[tuple[DetectionRule, DetectionRuleVersion, CentralRuleDefinition]] = []
     for rule, version in central:
-        definition = CentralRuleDefinition.model_validate(parsed_rule_content(rule.type, version.content))
+        definition = parsed_rule_content(rule.type, version.content)
+        if not isinstance(definition, CentralRuleDefinition):
+            raise RuntimeError("central rule parsed as an unexpected definition type")
         if _rule_matches(definition.all, definition.any, event):
             matches.append((rule, version, definition))
     suppressed_versions: list[int] = []
     suppressed_rule_ids: set[int] = set()
     matched_rule_ids = {rule.id for rule, _, _ in matches}
     for _, version in suppressions:
-        definition = SuppressionRuleDefinition.model_validate(parsed_rule_content(DetectionRuleType.SUPPRESSION, version.content))
+        definition = parsed_rule_content(DetectionRuleType.SUPPRESSION, version.content)
+        if not isinstance(definition, SuppressionRuleDefinition):
+            raise RuntimeError("suppression rule parsed as an unexpected definition type")
         if matched_rule_ids.intersection(definition.target_rule_ids) and _rule_matches(definition.all, [], event):
             suppressed_rule_ids.update(definition.target_rule_ids)
             if version.id is not None:
@@ -170,14 +197,14 @@ async def _evaluate_event(session, event: BehaviorEvent, *, mode: BehaviorDecisi
         material = definition.material
         reason = definition.reason
     matched_versions = [
-        {
-            "rule_id": rule.id,
-            "version_id": version.id,
-            "content_sha256": version.content_sha256,
-            "score": definition.score,
-            "classification": definition.classification.value,
-            "suppressed": rule.id in suppressed_rule_ids,
-        }
+        MatchedDetectionRuleVersion(
+            rule_id=rule.id,
+            version_id=version.id,
+            content_sha256=version.content_sha256,
+            score=definition.score,
+            classification=definition.classification,
+            suppressed=rule.id in suppressed_rule_ids,
+        ).model_dump(mode="json")
         for rule, version, definition in matches
     ]
     decision = BehaviorDecision(
@@ -252,7 +279,7 @@ async def _aggregate_signal(session, event, decision, selected):
         BehaviorSignal.first_observed_at <= event.observed_at + timedelta(seconds=definition.window_seconds),
         BehaviorSignal.status != BehaviorSignalStatus.CLOSED,
     ).order_by(BehaviorSignal.updated_at.desc()).with_for_update())).first()
-    now = datetime.now()
+    now = utc_now()
     if (
         signal is not None
         and signal.status == BehaviorSignalStatus.NOTIFIED

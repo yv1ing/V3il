@@ -16,22 +16,22 @@ import { useEffect, useMemo, useState } from "react";
 import { queryEgressProxies } from "../../shared/api/egressProxies";
 import {
   canManageSandboxContainer,
-  deleteSandboxContainer,
   pauseSandboxContainer,
   querySandboxContainers,
+  removeSandboxContainer,
   resumeSandboxContainer,
   startSandboxContainer,
   stopSandboxContainer,
   updateSandboxContainerEgress,
 } from "../../shared/api/sandboxContainers";
-import { SANDBOX_CONTAINER_EGRESS_MODE, SANDBOX_CONTAINER_STATUS, SANDBOX_CONTAINER_STATUS_VALUES } from "../../shared/api/generated/constants";
+import { SANDBOX_CONTAINER_EGRESS_MODE, SANDBOX_CONTAINER_PROTOCOL, SANDBOX_CONTAINER_STATUS, SANDBOX_CONTAINER_STATUS_VALUES } from "../../shared/api/generated/constants";
 import type { EgressProxy, SandboxContainer, SandboxContainerEgressMode } from "../../shared/api/types";
 import { FormField } from "../../shared/components/FormField";
 import { PagedResourceTable } from "../../shared/components/PagedResourceTable";
 import { OptionListSelect } from "../../shared/components/OptionListSelect";
 import { ResourceModal } from "../../shared/components/ResourceModal";
 import type { ResourceColumn } from "../../shared/components/ResourceTable";
-import { DeleteRowAction, OwnerCell, ResourceIdentity, ResourceText, RowActionButton, RowActions } from "../../shared/components/ResourceCells";
+import { OwnerCell, RemoveRowAction, ResourceIdentity, ResourceText, RowActionButton, RowActions } from "../../shared/components/ResourceCells";
 import { useAdminResourceHeader } from "../../shared/hooks/useAdminResourceHeader";
 import { useOptionList } from "../../shared/hooks/useOptionList";
 import { usePagedResourceList } from "../../shared/hooks/usePagedResourceList";
@@ -63,8 +63,8 @@ export function SandboxContainersPage() {
   const { run: resumeContainer, busyId: resumingId } = useResourceAction<SandboxContainer>(
     (container) => resumeSandboxContainer(container.id), containers.loadItems,
   );
-  const { run: deleteContainer, busyId: deletingId } = useResourceAction<SandboxContainer>(
-    (container) => deleteSandboxContainer(container.id), containers.loadItems,
+  const { run: removeContainer, busyId: removingId } = useResourceAction<SandboxContainer>(
+    (container) => removeSandboxContainer(container.id), containers.loadItems,
   );
 
   useAdminResourceHeader({
@@ -152,8 +152,8 @@ export function SandboxContainersPage() {
               disabled={!canManage || container.status !== SANDBOX_CONTAINER_STATUS.PAUSED} loading={resumingId === container.id}
               onClick={() => void resumeContainer(container)}
             />
-            <DeleteRowAction title="Delete container" content={`Delete ${container.container_name}?`} label={`Delete ${container.container_name}`}
-              disabled={!canManage} loading={deletingId === container.id} onConfirm={() => void deleteContainer(container)}
+            <RemoveRowAction title="Remove container" content={`Remove ${container.container_name}?`} label={`Remove ${container.container_name}`}
+              disabled={!canManage} loading={removingId === container.id} onConfirm={() => void removeContainer(container)}
             />
           </RowActions>
         );
@@ -279,7 +279,7 @@ function renderContainerPorts(container: SandboxContainer) {
   return (
     <div className="port-mapping-list">
       <Tag color="green">
-        control {container.control_proxy_host_port}:{container.control_proxy_port}/tcp
+        control {container.control_proxy_host_port}:{container.control_proxy_port}/{SANDBOX_CONTAINER_PROTOCOL.TCP}
       </Tag>
       {container.port_mappings.map((mapping) => (
         <Tag key={`${mapping.host_port}-${mapping.container_port}-${mapping.protocol}`} color="blue">

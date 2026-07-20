@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query
 
 from handler.system_user.users import (
     create_system_user_handler,
-    delete_system_user_handler,
+    retire_system_user_handler,
     query_system_users_handler,
     system_user_login_handler,
     update_system_user_handler,
@@ -16,7 +16,7 @@ from router.common.responses import (
 )
 from schema.common.responses import CommonResponse
 from schema.system_user.users import (
-    DeleteSystemUserResponse,
+    RetireSystemUserResponse,
     QuerySystemUsersResponse,
     SystemUserLoginResponse,
     SystemUserSchema,
@@ -61,11 +61,11 @@ router.add_api_route(
 )
 
 router.add_api_route(
-    "/{id}",
-    delete_system_user_handler,
-    methods=["DELETE"],
+    "/{id}/retire",
+    retire_system_user_handler,
+    methods=["POST"],
     dependencies=ADMIN_ONLY,
-    response_model=CommonResponse[DeleteSystemUserResponse],
+    response_model=CommonResponse[RetireSystemUserResponse],
     responses={**COMMON_ERROR_RESPONSES, **BAD_REQUEST_RESPONSE, **NOT_FOUND_RESPONSE},
 )
 

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import hashlib
 
 from sqlalchemy import func, or_
 from sqlmodel import select
@@ -8,9 +9,9 @@ from model.threat.analysis import AnalysisEvidenceLink, AnalysisRecord
 from model.threat.behaviors import BehaviorEvent, ThreatIncidentBehaviorEvent
 from model.detection.rules import BehaviorDecision, BehaviorSignal, BehaviorSignalEvent
 from model.threat.incidents import ThreatIncident, ThreatIncidentEnvironment
-from model.threat.intelligence import IntelligenceReport, ThreatIndicator
+from model.threat.intelligence import IntelligenceReport, IntelligenceReportArtifact, ThreatIndicator
 from model.threat.chains import AttackChain
-from model.threat.investigations import InvestigationTaskEvent
+from model.threat.investigations import EvidenceBehaviorLink
 from schema.system_user.users import SystemUserRole
 from schema.threat.analysis import AnalysisKind
 from schema.threat.incidents import ThreatIncidentStatus
@@ -26,11 +27,13 @@ from schema.threat.intelligence import (
     ThreatIndicatorType,
 )
 from schema.threat.investigations import AuditActorType, AuditEventKind
+from schema.runtime import KnowledgePublicationReadyPayload
 from service.common.pagination import Page, RESOURCE_PAGE_SIZE, page_offset
 from service.threat.analysis_records import analysis_evidence_ids, create_analysis_record
 from service.threat.audit import add_audit_event
 from service.threat.event_integrity import require_behavior_event_integrity
 from service.threat.report_readiness import final_report_analysis_error
+from service.runtime import enqueue_outbox_event
 
 
 @dataclass(frozen=True)
@@ -112,6 +115,18 @@ async def query_threat_indicators_for_user(incident_id: int, *, page=1, size=RES
 
 
 async def create_intelligence_report(incident_id: int, request: CreateIntelligenceReportRequest, *, user_id: int, user_role: SystemUserRole, agent_code: str = "", session_id: str = "") -> IntelligenceReportMutationResult:
+    if agent_code == "cir" and request.status == IntelligenceReportStatus.FINAL:
+        return IntelligenceReportMutationResult(
+            report=None,
+            conflict=True,
+            message="cir may draft reports; only cso may finalize the incident report",
+        )
+    if agent_code and agent_code not in {"cir", "cso"}:
+        return IntelligenceReportMutationResult(
+            report=None,
+            conflict=True,
+            message="only cir and cso may create intelligence reports",
+        )
     async with get_async_session() as session, session.begin():
         incident, error = await _lock_incident(session, incident_id, user_id, user_role)
         if error:
@@ -207,7 +222,11 @@ async def create_intelligence_report(incident_id: int, request: CreateIntelligen
             incident_id=incident_id,
             version=version,
             is_current=True,
-            status=request.status,
+            status=(
+                IntelligenceReportStatus.REVIEW
+                if request.status == IntelligenceReportStatus.FINAL
+                else request.status
+            ),
             title=request.title,
             executive_summary=request.executive_summary,
             behavior_summary=request.behavior_summary,
@@ -226,6 +245,33 @@ async def create_intelligence_report(incident_id: int, request: CreateIntelligen
         )
         session.add(report)
         await session.flush()
+        if request.status == IntelligenceReportStatus.FINAL:
+            from service.threat.report_export import build_report_bundle_in_session
+
+            report.status = IntelligenceReportStatus.FINAL
+            content, filename = await build_report_bundle_in_session(session, incident, report)
+            artifact_sha256 = hashlib.sha256(content).hexdigest()
+            report.artifact_sha256 = artifact_sha256
+            report.artifact_media_type = "application/zip"
+            report.artifact_filename = filename
+            report.artifact_size = len(content)
+            session.add(report)
+            session.add(IntelligenceReportArtifact(
+                report_id=report.id,
+                sha256=artifact_sha256,
+                media_type=report.artifact_media_type,
+                filename=filename,
+                content=content,
+                byte_size=len(content),
+            ))
+            enqueue_outbox_event(
+                session,
+                KnowledgePublicationReadyPayload(
+                    report_id=report.id,
+                    artifact_sha256=artifact_sha256,
+                ),
+                idempotency_key=artifact_sha256,
+            )
         await add_audit_event(
             session,
             incident_id=incident_id,
@@ -236,13 +282,14 @@ async def create_intelligence_report(incident_id: int, request: CreateIntelligen
             object_type="intelligence_report",
             object_id=report.id,
             summary="Intelligence report version created.",
-            details={"version": version, "status": request.status.value, "analysis_ids": request.analysis_ids},
+            details={
+                "version": version,
+                "status": request.status.value,
+                "analysis_ids": request.analysis_ids,
+                "artifact_sha256": report.artifact_sha256,
+            },
         )
         schema = IntelligenceReportSchema.model_validate(report)
-        report_id = report.id
-    if request.status == IntelligenceReportStatus.FINAL and report_id is not None:
-        from service.threat.knowledge import request_intelligence_report_publication
-        request_intelligence_report_publication(report_id)
     return IntelligenceReportMutationResult(report=schema)
 
 
@@ -269,9 +316,9 @@ async def build_intelligence_report_evidence_manifest(
         .order_by(AnalysisEvidenceLink.evidence_id.asc())
     )).all()))
     behavior_event_ids = list(dict.fromkeys((await session.exec(
-        select(InvestigationTaskEvent.event_id)
-        .where(InvestigationTaskEvent.evidence_id.in_(evidence_ids))
-        .order_by(InvestigationTaskEvent.event_id.asc())
+        select(EvidenceBehaviorLink.event_id)
+        .where(EvidenceBehaviorLink.evidence_id.in_(evidence_ids))
+        .order_by(EvidenceBehaviorLink.event_id.asc())
     )).all())) if evidence_ids else []
     environments = list((await session.exec(
         select(ThreatIncidentEnvironment.environment_id)

@@ -1,5 +1,5 @@
 import { Button, Popconfirm } from "@douyinfe/semi-ui";
-import { Eye, EyeOff, Trash2, User } from "lucide-react";
+import { Archive, CircleMinus, Eye, EyeOff, Trash2, User } from "lucide-react";
 import { useState, type ComponentProps, type ReactNode } from "react";
 import { UI_TEXT } from "../lib/uiText";
 
@@ -71,18 +71,32 @@ export function RowActionButton({ icon, label, type = "tertiary", ...props }: Ro
   return <Button {...props} icon={icon} theme="borderless" type={type} aria-label={label} />;
 }
 
-type DeleteRowActionProps = Partial<Pick<ButtonProps, "disabled" | "loading" | "size">> & {
+type DestructiveRowActionProps = Partial<Pick<ButtonProps, "disabled" | "loading" | "size">> & {
   content: ReactNode;
   label: string;
   title: ReactNode;
   onConfirm: () => void | Promise<void>;
 };
 
-export function DeleteRowAction({ content, label, onConfirm, title, ...buttonProps }: DeleteRowActionProps) {
-  const iconSize = buttonProps.size === "small" ? 14 : 15;
+function DestructiveRowAction({ content, icon, label, onConfirm, title, ...buttonProps }: DestructiveRowActionProps & { icon: ReactNode }) {
   return (
     <Popconfirm title={title} content={content} okType="danger" cancelText={UI_TEXT.cancel} onConfirm={onConfirm}>
-      <Button {...buttonProps} icon={<Trash2 size={iconSize} />} theme="borderless" type="danger" aria-label={label} />
+      <Button {...buttonProps} icon={icon} theme="borderless" type="danger" aria-label={label} />
     </Popconfirm>
   );
+}
+
+export function DeleteRowAction(props: DestructiveRowActionProps) {
+  const iconSize = props.size === "small" ? 14 : 15;
+  return <DestructiveRowAction {...props} icon={<Trash2 size={iconSize} />} />;
+}
+
+export function RetireRowAction(props: DestructiveRowActionProps) {
+  const iconSize = props.size === "small" ? 14 : 15;
+  return <DestructiveRowAction {...props} icon={<Archive size={iconSize} />} />;
+}
+
+export function RemoveRowAction(props: DestructiveRowActionProps) {
+  const iconSize = props.size === "small" ? 14 : 15;
+  return <DestructiveRowAction {...props} icon={<CircleMinus size={iconSize} />} />;
 }

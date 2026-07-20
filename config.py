@@ -6,7 +6,7 @@ from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from schema.agent.sessions import AgentCode, CANONICAL_AGENT_IDENTITIES
+from schema.agent.types import AgentCode, CANONICAL_AGENT_IDENTITIES
 
 
 ROOT_PATH = Path(__file__).resolve().parent
@@ -56,7 +56,7 @@ class DatabaseConfig(StrictConfigModel):
 
 # agent config
 class AgentConfig(StrictConfigModel):
-    code: str = Field(min_length=1, max_length=64)
+    code: AgentCode
     name: str = Field(min_length=1, max_length=128)
     description: str = Field(default="")
     base_url: str = Field(min_length=1)
@@ -66,17 +66,13 @@ class AgentConfig(StrictConfigModel):
     context_window: int = Field(default=1000000, ge=0)
 
 
-# per-process agent runtime pool tuning
-class AgentPoolConfig(StrictConfigModel):
-    max_size: int = Field(default=256, ge=1)
-    ttl_seconds: int = Field(default=30 * 60, ge=0)
-    sweep_interval_seconds: int = Field(default=60, ge=1)
-
-
-# per-process agent run tuning
+# persistent Agent Run tuning
 class AgentRuntimeConfig(StrictConfigModel):
+    max_concurrent_runs: int = Field(default=8, ge=1, le=64)
+    max_concurrent_sandbox_jobs: int = Field(default=8, ge=1, le=64)
+    max_sandbox_commands_per_batch: int = Field(default=3, ge=1, le=8)
     main_max_turns: int = Field(default=1000, ge=1)
-    subordinate_max_turns: int = Field(default=1000, ge=1)
+    specialist_max_turns: int = Field(default=1000, ge=1)
     model_stream_idle_timeout_seconds: int = Field(default=300, ge=30)
     report_retention_seconds: int = Field(default=3 * 24 * 60 * 60, ge=0)
     context_compression_trigger_ratio: float = Field(default=0.90, gt=0, lt=1)
@@ -131,8 +127,7 @@ class LightRAGConfig(StrictConfigModel):
 class GlobalConfig(StrictConfigModel):
     system: SystemConfig = Field(default_factory=SystemConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
-    agents: dict[str, AgentConfig] = Field(default_factory=dict)
-    agent_pool: AgentPoolConfig = Field(default_factory=AgentPoolConfig)
+    agents: dict[AgentCode, AgentConfig] = Field(default_factory=dict)
     agent_runtime: AgentRuntimeConfig = Field(default_factory=AgentRuntimeConfig)
     behavior_capture: BehaviorCaptureConfig = Field(default_factory=BehaviorCaptureConfig)
     threat_automation: ThreatAutomationConfig = Field(default_factory=ThreatAutomationConfig)
@@ -173,8 +168,8 @@ def read_config_file() -> GlobalConfig:
     return config
 
 
-def validate_runtime_agent_set(agents: dict[str, AgentConfig]) -> None:
-    expected = {code.value for code in AgentCode}
+def validate_runtime_agent_set(agents: dict[AgentCode, AgentConfig]) -> None:
+    expected = set(AgentCode)
     configured = set(agents)
     if configured != expected:
         missing = sorted(expected - configured)
@@ -190,11 +185,10 @@ def validate_runtime_agent_set(agents: dict[str, AgentConfig]) -> None:
             + ")"
         )
     for code_value, agent in agents.items():
-        code = AgentCode(code_value)
-        expected_name, expected_role = CANONICAL_AGENT_IDENTITIES[code]
+        expected_name, expected_role = CANONICAL_AGENT_IDENTITIES[code_value]
         if agent.name != expected_name or agent.description != expected_role:
             raise ValueError(
-                f"agent {code_value} identity must remain {expected_name} / {expected_role}"
+                f"agent {code_value.value} identity must remain {expected_name} / {expected_role}"
             )
 
 

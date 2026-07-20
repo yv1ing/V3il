@@ -1,6 +1,7 @@
 import { ArrowRight, Network, Radar } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { agentSessionPath } from "../../app/routePaths";
 import { createDeceptionEnvironment, queryDeceptionEnvironments } from "../../shared/api/deceptionEnvironments";
 import { queryEgressProxies } from "../../shared/api/egressProxies";
 import {
@@ -31,7 +32,7 @@ import { DeceptionEnvironmentFormModal } from "./DeceptionEnvironmentFormModal";
 
 export function DeceptionEnvironmentsPage() {
   const navigate = useNavigate();
-  const { refreshSessions, selectSession } = useAgentSessionContext();
+  const { refreshSessions, selectSession, syncSessionSummaries } = useAgentSessionContext();
   const environments = usePagedResourceList<DeceptionEnvironment>({ query: queryDeceptionEnvironments });
   const hostQuery = useCallback(
     (params: { page: number; size: number; keyword: string }) => querySandboxContainerHostOptions(params),
@@ -58,10 +59,11 @@ export function DeceptionEnvironmentsPage() {
     onSuccess: async (response) => {
       setCreateOpen(false);
       await Promise.all([environments.loadItems(), refreshSessions()]);
-      const sessionId = response.data?.session_id;
-      if (sessionId) {
-        selectSession(sessionId);
-        navigate("/playground", { state: { sessionId } });
+      const session = response.data?.session;
+      if (session) {
+        syncSessionSummaries([session]);
+        selectSession(session.id);
+        navigate(agentSessionPath(session.id));
       }
     },
   });

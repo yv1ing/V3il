@@ -1,4 +1,5 @@
 import { apiBlob, defineJsonEndpoint } from "./client";
+import { THREAT_INCIDENT_ACTION } from "./generated/constants";
 import { buildQuery } from "./query";
 import type {
   ActivateInvestigationTaskResponse,
@@ -8,14 +9,12 @@ import type {
   CreateInvestigationEvidenceResponse,
   CreateInvestigationTaskRequest,
   CreateInvestigationTaskResponse,
-  CreateThreatIncidentSessionResponse,
-  DeleteThreatIncidentSessionResponse,
+  EnsureThreatIncidentSessionResponse,
+  GetThreatIncidentSessionResponse,
   GetThreatIncidentResponse,
   GetThreatIncidentTimelineParams,
   GetThreatIncidentTimelineResponse,
   GetThreatIncidentWorkspaceResponse,
-  ListThreatIncidentSessionsParams,
-  ListThreatIncidentSessionsResponse,
   QueryAuditEventsParams,
   QueryAuditEventsResponse,
   QueryIncidentBehaviorEventsParams,
@@ -38,7 +37,8 @@ import type {
 
 const THREAT_INCIDENTS_PATH = "/api/threat-incidents";
 
-export type ThreatIncidentAction = "start-investigation" | "start-engagement" | "finalize" | "close" | "reopen";
+export type ThreatIncidentAction =
+  (typeof THREAT_INCIDENT_ACTION)[keyof typeof THREAT_INCIDENT_ACTION];
 
 export const queryThreatIncidents = defineJsonEndpoint<
   [params: QueryThreatIncidentsParams],
@@ -120,20 +120,15 @@ export const queryAuditEvents = defineJsonEndpoint<
   QueryAuditEventsResponse
 >("GET", (incidentId, params) => `${THREAT_INCIDENTS_PATH}/${incidentId}/audit-events${buildQuery(params)}`);
 
-export const listThreatIncidentSessions = defineJsonEndpoint<
-  [incidentId: number, params: ListThreatIncidentSessionsParams],
-  ListThreatIncidentSessionsResponse
->("GET", (incidentId, params) => `${THREAT_INCIDENTS_PATH}/${incidentId}/sessions${buildQuery(params)}`);
-
-export const createThreatIncidentSession = defineJsonEndpoint<
+export const getThreatIncidentSession = defineJsonEndpoint<
   [incidentId: number],
-  CreateThreatIncidentSessionResponse
->("POST", (incidentId) => `${THREAT_INCIDENTS_PATH}/${incidentId}/sessions`);
+  GetThreatIncidentSessionResponse
+>("GET", (incidentId) => `${THREAT_INCIDENTS_PATH}/${incidentId}/session`);
 
-export const deleteThreatIncidentSession = defineJsonEndpoint<
-  [incidentId: number, sessionId: string],
-  DeleteThreatIncidentSessionResponse
->("DELETE", (incidentId, sessionId) => `${THREAT_INCIDENTS_PATH}/${incidentId}/sessions/${encodeURIComponent(sessionId)}`);
+export const ensureThreatIncidentSession = defineJsonEndpoint<
+  [incidentId: number],
+  EnsureThreatIncidentSessionResponse
+>("PUT", (incidentId) => `${THREAT_INCIDENTS_PATH}/${incidentId}/session`);
 
 export const downloadThreatIncidentReport = (incidentId: number, reportId: number) => (
   apiBlob(`${THREAT_INCIDENTS_PATH}/${incidentId}/reports/${reportId}/download`)

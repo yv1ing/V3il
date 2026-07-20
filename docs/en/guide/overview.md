@@ -56,6 +56,23 @@ V3il creates the investigation plan. H4wk, L1ly, J4ck, and Ph4ntom contribute be
 
 Evidence-backed conclusions retain version history. Once the investigation meets its quality criteria, V3il produces intent, attack-chain reconstruction, a profile, risk assessment, response guidance, and a final report. The report can be published to knowledge and exported with its evidence.
 
+## Business Workspaces
+
+V3il maintains two canonical operating spaces. A **Threat Incident** brings correlated behavior, tasks, evidence, analysis, decisions, reporting, and knowledge publication into one investigation record. A **Deception Environment** brings attacker-facing services, versioned change, runtime state, detection coverage, and observed behavior into one engagement record.
+
+Each Incident and Environment owns one Agent Session. The workspace, Agent Console, and Agent Operations open the same Session, preserving the team's accepted history and current work across navigation and browser connections.
+
+## Agent Collaboration Model
+
+| Concept | Product responsibility |
+| --- | --- |
+| Session | Durable collaboration space and ordered operational history. |
+| Run | One accepted objective owned by the main Agent or a specialist. |
+| Attempt | One execution of a Run and its recovery boundary. |
+| Context | Persistent role-specific memory with decision and evidence provenance. |
+
+V3il coordinates the Agent Defense Team through scoped delegation. A Run can wait for one named specialist result or Sandbox operation and continues once when that result is ready. Confirmed outcomes remain part of the Session; uncertain external actions enter the recovery queue for operator resolution. Context compression retains material decisions, evidence, tool results, and unresolved questions during long investigations.
+
 ## Main Workspaces
 
 - **Command Center:** Overall status for environments, Incidents, detections, Agent work, and infrastructure.
@@ -63,7 +80,7 @@ Evidence-backed conclusions retain version history. Once the investigation meets
 - **Incident Workspace:** Timeline, tasks, evidence, analysis, adaptive engagement, audit, and reporting.
 - **Detection:** Zeek and behavior policy, deployment state, and decisions.
 - **Threat Intelligence:** Indicators, attacker profiles, risk assessments, and intelligence reports.
-- **Agent Operations:** Agent tasks, running work, reviews, and durable session history.
+- **Agent Operations:** Active Runs, specialist dependencies, recovery decisions, reviews, and durable Session history.
 - **Infrastructure:** Hosts, images, containers, proxies, terminals, and files.
 - **Knowledge Base:** Reports and research material for retrieval and reuse.
 

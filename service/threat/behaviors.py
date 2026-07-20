@@ -1,10 +1,11 @@
 import hashlib
 import hmac
 from dataclasses import dataclass
-from datetime import datetime
 
 from sqlalchemy import func, or_
 from sqlmodel import select
+
+from utils.time import utc_now
 
 from database import get_async_session
 from model.deception.environments import DeceptionEnvironment
@@ -218,7 +219,7 @@ async def ingest_behavior_event_batch(
                             incident_id=request.incident_id,
                             correlation_method="explicit_ingest",
                             correlation_key=request.sensor_id,
-                            linked_at=datetime.now(),
+                            linked_at=utc_now(),
                         ))
                 duplicates += 1
                 if existing.id is not None:
@@ -247,7 +248,7 @@ async def ingest_behavior_event_batch(
                 sensor_id=request.sensor_id,
                 previous_event_hash=previous_event_hash,
                 event_hash=behavior_event_hash(captured, previous_event_hash),
-                ingested_at=datetime.now(),
+                ingested_at=utc_now(),
                 **captured.model_dump(),
             )
             session.add(event)
@@ -262,7 +263,7 @@ async def ingest_behavior_event_batch(
                     incident_id=request.incident_id,
                     correlation_method="explicit_ingest",
                     correlation_key=request.sensor_id,
-                    linked_at=datetime.now(),
+                    linked_at=utc_now(),
                 ))
             expected_sequence += 1
             cursor.last_sequence = captured.sequence
@@ -273,11 +274,11 @@ async def ingest_behavior_event_batch(
                 latest_observed_at = captured.observed_at
 
         cursor.last_observed_at = latest_observed_at
-        cursor.updated_at = datetime.now()
+        cursor.updated_at = utc_now()
         session.add(cursor)
         if incident is not None and latest_observed_at is not None and latest_observed_at > incident.last_observed_at:
             incident.last_observed_at = latest_observed_at
-            incident.updated_at = datetime.now()
+            incident.updated_at = utc_now()
             session.add(incident)
 
         response = IngestBehaviorEventBatchResponse(
@@ -491,7 +492,7 @@ async def assign_behavior_events_to_incident(
                 linked_from_session_id=session_id,
                 correlation_method="agent_assignment" if agent_code else "user_assignment",
                 correlation_key=agent_code or str(user_id),
-                linked_at=datetime.now(),
+                linked_at=utc_now(),
             ))
             relation = await session.get(ThreatIncidentEnvironment, (incident_id, event.environment_id))
             if relation is None:
@@ -512,7 +513,7 @@ async def assign_behavior_events_to_incident(
             last_observed_at = max(event.observed_at for event in events)
             if last_observed_at > incident.last_observed_at:
                 incident.last_observed_at = last_observed_at
-                incident.updated_at = datetime.now()
+                incident.updated_at = utc_now()
                 session.add(incident)
     return AssignBehaviorEventsResponse(
         incident_id=incident_id,

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { showApiError } from "../api/feedback";
-import { RESOURCE_PAGE_SIZE } from "../api/generated/constants";
+import { PAGINATION_DEFAULT_PAGE_SIZE } from "../api/generated/constants";
 
 type QueryParams = {
   page: number;
@@ -55,7 +55,7 @@ export function usePagedResourceList<Item, Data extends QueryData<Item> = QueryD
     requestIdRef.current = requestId;
     setLoading(true);
     try {
-      const response = await query({ page, size: RESOURCE_PAGE_SIZE, keyword: activeKeyword });
+      const response = await query({ page, size: PAGINATION_DEFAULT_PAGE_SIZE, keyword: activeKeyword });
       if (!mountedRef.current || requestIdRef.current !== requestId) return undefined;
       const data = response.data ?? null;
       const nextItems = data?.items || [];
@@ -64,7 +64,7 @@ export function usePagedResourceList<Item, Data extends QueryData<Item> = QueryD
       if (notifyData) onData?.(data);
       setItems(nextItems);
       if (nextItems.length === 0 && page > 1) {
-        const lastPage = Math.max(1, Math.ceil((data?.total ?? 0) / RESOURCE_PAGE_SIZE));
+        const lastPage = Math.max(1, Math.ceil((data?.total ?? 0) / PAGINATION_DEFAULT_PAGE_SIZE));
         setPage(lastPage);
         return data;
       }
@@ -118,8 +118,8 @@ export function usePagedResourceList<Item, Data extends QueryData<Item> = QueryD
     page,
     keyword,
     total,
-    rangeStart: total === 0 ? 0 : (page - 1) * RESOURCE_PAGE_SIZE + 1,
-    rangeEnd: Math.min(page * RESOURCE_PAGE_SIZE, total),
+    rangeStart: total === 0 ? 0 : (page - 1) * PAGINATION_DEFAULT_PAGE_SIZE + 1,
+    rangeEnd: Math.min(page * PAGINATION_DEFAULT_PAGE_SIZE, total),
     loading,
     loaded,
     loadItems,
@@ -130,6 +130,6 @@ export function usePagedResourceList<Item, Data extends QueryData<Item> = QueryD
     next,
     goToFirstPage,
     canGoBack: page > 1,
-    canGoNext: page * RESOURCE_PAGE_SIZE < total,
+    canGoNext: page * PAGINATION_DEFAULT_PAGE_SIZE < total,
   };
 }

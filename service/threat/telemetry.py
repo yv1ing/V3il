@@ -2,9 +2,10 @@ import asyncio
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import datetime
 
 from sqlmodel import select
+
+from utils.time import utc_now
 
 from config import get_config
 from database import get_async_session
@@ -384,7 +385,7 @@ async def _record_sensor_health_state(
     sequence = cursor_sequence + 1
     event = CapturedBehaviorEvent(
         sequence=sequence,
-        observed_at=datetime.now(),
+        observed_at=utc_now(),
         category=BehaviorEventCategory.SYSTEM,
         action=action,
         source=BehaviorEventSource.CONTROL_PLANE,

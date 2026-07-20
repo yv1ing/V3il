@@ -19,11 +19,12 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { listAgentSessions } from "../../shared/api/agentSessions";
+import { agentSessionPath } from "../../app/routePaths";
 import {
   approveDeceptionRevision,
   executeDeceptionRevision,
   getDeceptionEnvironment,
+  getDeceptionEnvironmentSession,
   getDeceptionReferences,
   listObservedWorkloads,
   pauseDeceptionEnvironment,
@@ -39,12 +40,13 @@ import { showApiError, showApiSuccess } from "../../shared/api/feedback";
 import {
   DECEPTION_ENVIRONMENT_STATUS,
   DECEPTION_REVISION_STATUS,
+  FIELD_CONSTRAINTS,
   OBSERVED_WORKLOAD_STATUS,
+  PAGINATION_MAXIMUM_PAGE_SIZE,
 } from "../../shared/api/generated/constants";
 import { collectAllPages } from "../../shared/api/pagination";
 import type {
   BehaviorEvent,
-  AgentSessionSummary,
   CommonResponsePayload,
   DeceptionEnvironment,
   DeceptionReferenceBundle,
@@ -77,7 +79,7 @@ type DecisionState = { revision: DeceptionRevision; approve: boolean } | null;
 
 export function DeceptionWorkspacePage() {
   const navigate = useNavigate();
-  const { refreshSessions, selectSession } = useAgentSessionContext();
+  const { selectSession, syncSessionSummaries } = useAgentSessionContext();
   const { environmentId } = useParams();
   const id = Number(environmentId);
   const validId = Number.isInteger(id) && id > 0 ? id : 0;
@@ -93,8 +95,8 @@ export function DeceptionWorkspacePage() {
       const [environmentResponse, referenceResponse, revisions, events, workloadResponse] = await Promise.all([
         getDeceptionEnvironment(validId),
         getDeceptionReferences(validId),
-        collectAllPages<DeceptionRevision>((page) => queryDeceptionRevisions(validId, { page, size: 100 })),
-        collectAllPages<BehaviorEvent>((page) => queryBehaviorEvents(validId, { page, size: 100, keyword: "" })),
+        collectAllPages<DeceptionRevision>((page) => queryDeceptionRevisions(validId, { page, size: PAGINATION_MAXIMUM_PAGE_SIZE })),
+        collectAllPages<BehaviorEvent>((page) => queryBehaviorEvents(validId, { page, size: PAGINATION_MAXIMUM_PAGE_SIZE, keyword: "" })),
         listObservedWorkloads(validId),
       ]);
       if (!environmentResponse.data) {
@@ -123,27 +125,21 @@ export function DeceptionWorkspacePage() {
     void load();
   }, [load]);
 
-  const openConsoleSession = useCallback(async (sessionId: string) => {
-    await refreshSessions();
-    selectSession(sessionId);
-    navigate("/playground", { state: { sessionId } });
-  }, [navigate, refreshSessions, selectSession]);
-
   const openEnvironmentConsole = useCallback(async () => {
     if (!validId || action) return;
     setAction("console");
     try {
-      const sessions = await collectAllPages<AgentSessionSummary>(
-        (page) => listAgentSessions({ page, size: 100 }),
-      );
-      const session = sessions.find((item) => item.environment_id === validId);
+      const response = await getDeceptionEnvironmentSession(validId);
+      const session = response.data;
       if (!session) throw new Error("Environment Console session was not found");
-      await openConsoleSession(session.session_id);
+      syncSessionSummaries([session]);
+      selectSession(session.id);
+      navigate(agentSessionPath(session.id));
     } catch (error) {
       showApiError(error);
       setAction(null);
     }
-  }, [action, openConsoleSession, validId]);
+  }, [action, navigate, selectSession, syncSessionSummaries, validId]);
 
   const run = async (key: string, operation: () => Promise<CommonResponsePayload>) => {
     if (action) return;
@@ -475,7 +471,7 @@ function DecisionModal({ state, saving, onCancel, onSubmit }: {
       onSubmit={() => onSubmit(state, reason.trim())}
     >
       <FormField label="Revision"><Input value={`Revision ${state.revision.version}`} disabled /></FormField>
-      <FormField label="Decision reason"><TextArea value={reason} rows={5} maxLength={4000} onChange={setReason} /></FormField>
+      <FormField label="Decision reason"><TextArea value={reason} rows={5} maxLength={FIELD_CONSTRAINTS.DeceptionRevisionDecisionRequest.reason.maxLength} onChange={setReason} /></FormField>
     </ResourceModal>
   );
 }

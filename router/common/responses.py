@@ -1,28 +1,16 @@
-from schema.common.responses import CommonResponse
+from schema.common.problems import ProblemDetails
 
 
-# 401 / 403 are now driven from the route's auth dependencies; this dict only
-# carries shared error responses that have to be declared per-route
 COMMON_ERROR_RESPONSES = {
-    422: {"description": "Validation Error", "model": CommonResponse},
+    401: {"description": "Unauthorized", "model": ProblemDetails},
+    422: {"description": "Validation Error", "model": ProblemDetails},
+    500: {"description": "Internal Server Error", "model": ProblemDetails},
 }
-
-BAD_REQUEST_RESPONSE = {
-    400: {"description": "Bad Request", "model": CommonResponse},
-}
-
-FORBIDDEN_RESPONSE = {
-    403: {"description": "Forbidden", "model": CommonResponse},
-}
-
-INTERNAL_ERROR_RESPONSE = {
-    500: {"description": "Internal Server Error", "model": CommonResponse},
-}
-
-CONFLICT_RESPONSE = {
-    409: {"description": "Conflict", "model": CommonResponse},
-}
+BAD_REQUEST_RESPONSE = {400: {"description": "Bad Request", "model": ProblemDetails}}
+FORBIDDEN_RESPONSE = {403: {"description": "Forbidden", "model": ProblemDetails}}
+INTERNAL_ERROR_RESPONSE = {500: {"description": "Internal Server Error", "model": ProblemDetails}}
+CONFLICT_RESPONSE = {409: {"description": "Conflict", "model": ProblemDetails}}
 
 
 def not_found_response(resource: str) -> dict:
-    return {404: {"description": f"{resource} not found", "model": CommonResponse}}
+    return {404: {"description": f"{resource} not found", "model": ProblemDetails}}

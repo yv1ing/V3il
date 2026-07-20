@@ -4,6 +4,7 @@ from sqlmodel import select
 from model.threat.analysis import AnalysisEvidenceLink, AnalysisRecord
 from model.threat.investigations import InvestigationEvidence, InvestigationTask
 from core.agent.constants import DEFAULT_AGENT_CODE
+from schema.agent.sessions import AgentCode
 from schema.threat.analysis import AnalysisKind, AnalysisReviewStatus
 from schema.threat.investigations import InvestigationTaskStatus
 
@@ -44,6 +45,16 @@ async def create_analysis_record(
     source_session_id: str,
     investigation_task_id: int | None = None,
 ) -> AnalysisRecord:
+    if agent_code:
+        allowed_agents = {
+            AnalysisKind.INTENT: {AgentCode.CTH, AgentCode.CDE, AgentCode.CIE},
+            AnalysisKind.ATTACK_CHAIN: {AgentCode.CTH},
+            AnalysisKind.INDICATOR: {AgentCode.CTH, AgentCode.CIE},
+            AnalysisKind.ATTACKER_PROFILE: {AgentCode.CIE},
+            AnalysisKind.RISK: {AgentCode.CIR},
+        }[kind]
+        if AgentCode(agent_code) not in allowed_agents:
+            raise ValueError(f"Agent {agent_code} cannot create {kind.value} analysis")
     await require_incident_evidence(session, incident_id, evidence_ids)
     specialist_proposal = bool(agent_code and agent_code != DEFAULT_AGENT_CODE)
     if specialist_proposal:

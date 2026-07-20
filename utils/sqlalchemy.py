@@ -1,10 +1,14 @@
 from enum import Enum
 from typing import TypeVar
 
-from sqlalchemy import Enum as SQLAlchemyEnum
+from sqlalchemy import Column, DateTime, Enum as SQLAlchemyEnum
 
 
 EnumType = TypeVar("EnumType", bound=Enum)
+
+
+def utc_datetime_column(*, nullable: bool = False, index: bool = False) -> Column:
+    return Column(DateTime(timezone=True), nullable=nullable, index=index)
 
 
 def enum_value_type(enum_class: type[EnumType], *, length: int) -> SQLAlchemyEnum:

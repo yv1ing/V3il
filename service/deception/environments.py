@@ -1,32 +1,37 @@
-from dataclasses import dataclass
-from datetime import datetime
 import hashlib
+import json
+from dataclasses import dataclass
 from uuid import uuid4
 
 from fastapi import UploadFile
 from sqlalchemy import func, or_
 from sqlmodel import select
 
+from utils.time import utc_now
+
 from database import get_async_session
 from core.agent.constants import DEFAULT_AGENT_CODE
 from logger import get_logger
-from model.agent.sessions import AgentSessionMeta
+from model.agent.sessions import AgentSession
 from model.deception.environments import DeceptionArtifact, DeceptionEnvironment, DeceptionRevision, DeceptionRevisionStep
 from model.detection.rules import BehaviorSignal
 from model.egress_proxy.proxies import EgressProxy
 from model.host.hosts import ManagedHost
 from model.sandbox.containers import SandboxContainer
 from model.sandbox.images import SandboxImage
+from schema.common.resources import ResourceLifecycleStatus
 from schema.deception.environments import (
     CreateDeceptionArtifactRequest,
     DeceptionArtifactSchema,
     DeceptionContainerOwnership,
     DeceptionEvaluationStatus,
+    DeceptionAdaptationMode,
     EvaluateDeceptionRevisionRequest,
     CreateDeceptionEnvironmentRequest,
     DeceptionEnvironmentSchema,
     DeceptionEnvironmentStatus,
     DeceptionReferenceBundleSchema,
+    DeceptionRiskLevel,
     DeceptionRevisionKind,
     DeceptionRevisionSchema,
     DeceptionRevisionStatus,
@@ -40,6 +45,8 @@ from schema.sandbox.containers import (
 )
 from schema.system_user.users import SystemUserRole
 from schema.agent.sessions import SessionType
+from service.agent.scoped_sessions import ensure_scoped_session
+from service.agent.repository import request_session_cancellation, session_summary
 from schema.threat.investigations import AuditActorType, AuditEventKind
 from service.common.pagination import Page, RESOURCE_PAGE_SIZE, page_offset
 from service.agent.sandbox_selection import set_environment_session_sandbox_container
@@ -63,6 +70,8 @@ from service.deception.lifecycle import (
 
 
 logger = get_logger(__name__)
+
+
 @dataclass(frozen=True)
 class DeceptionMutationResult:
     environment: DeceptionEnvironmentSchema | None
@@ -94,20 +103,27 @@ async def create_deception_environment(
     agent_code: str = "",
     session_id: str = "",
 ):
-    from service.agent.sessions import ensure_sdk_session_row
-
-    planning_session_id = str(uuid4())
+    planning_session_id = ""
     staged = await stage_reference_uploads(uploads)
     environment_id: int | None = None
     try:
         async with get_async_session() as session, session.begin():
-            host = await session.get(ManagedHost, request.host_id)
-            image = await session.get(SandboxImage, request.image_id)
+            host = (await session.exec(select(ManagedHost).where(
+                ManagedHost.id == request.host_id,
+                ManagedHost.status == ResourceLifecycleStatus.ACTIVE,
+            ))).one_or_none()
+            image = (await session.exec(select(SandboxImage).where(
+                SandboxImage.id == request.image_id,
+                SandboxImage.status == ResourceLifecycleStatus.ACTIVE,
+            ))).one_or_none()
             if host is None or image is None:
                 await discard_staged_reference_bundle(staged)
                 return DeceptionMutationResult(environment=None, not_found=True, message="selected managed host or sandbox image does not exist")
             if request.egress_mode == SandboxContainerEgressMode.PROXY:
-                proxy = await session.get(EgressProxy, request.egress_proxy_id)
+                proxy = (await session.exec(select(EgressProxy).where(
+                    EgressProxy.id == request.egress_proxy_id,
+                    EgressProxy.status == ResourceLifecycleStatus.ACTIVE,
+                ))).one_or_none()
                 if proxy is None:
                     await discard_staged_reference_bundle(staged)
                     return DeceptionMutationResult(environment=None, not_found=True, message="selected egress proxy does not exist")
@@ -115,7 +131,10 @@ async def create_deception_environment(
             if request.sandbox_container_id is not None:
                 selected_container = (await session.exec(
                     select(SandboxContainer)
-                    .where(SandboxContainer.id == request.sandbox_container_id)
+                    .where(
+                        SandboxContainer.id == request.sandbox_container_id,
+                        SandboxContainer.status != SandboxContainerStatus.REMOVED,
+                    )
                     .with_for_update()
                 )).one_or_none()
                 if selected_container is None:
@@ -177,7 +196,7 @@ async def create_deception_environment(
                         conflict=True,
                         message="selected sandbox container requires at least one service port mapping",
                     )
-            now = datetime.now()
+            now = utc_now()
             environment = DeceptionEnvironment(
                 name=request.name,
                 description=request.description,
@@ -224,22 +243,20 @@ async def create_deception_environment(
                     "reference_file_count": len(staged.files),
                 },
             )
-            await ensure_sdk_session_row(session, planning_session_id)
-            session.add(AgentSessionMeta(
-                session_id=planning_session_id,
+            scoped_session = await ensure_scoped_session(
+                session,
                 session_type=SessionType.ENVIRONMENT,
                 title=f"Build deception environment: {request.name}",
-                agent_code=DEFAULT_AGENT_CODE,
                 owner_id=user_id,
                 environment_id=environment.id,
-                is_automated=False,
-                selected_sandbox_container_id=request.sandbox_container_id,
-                selected_sandbox_container_generation=(
+                sandbox_container_id=request.sandbox_container_id,
+                sandbox_generation=(
                     status_generation(selected_container)
                     if selected_container is not None
                     else 0
                 ),
-            ))
+            )
+            planning_session_id = scoped_session.id
             env_schema = DeceptionEnvironmentSchema.model_validate(environment)
             references = await commit_staged_reference_bundle(
                 staged,
@@ -260,6 +277,13 @@ async def create_deception_environment(
 
 
 async def plan_deception_revision(environment_id: int, request: PlanDeceptionRevisionRequest, *, user_id: int, user_role: SystemUserRole, agent_code: str = "", session_id: str = "", incident_id: int | None = None, investigation_task_id: int | None = None):
+    if agent_code and agent_code != "cde":
+        return DeceptionRevisionMutationResult(
+            revision=None,
+            environment=None,
+            conflict=True,
+            message="only cde may plan deception revisions",
+        )
     async with get_async_session() as session, session.begin():
         environment = (await session.exec(select(DeceptionEnvironment).where(DeceptionEnvironment.id == environment_id).with_for_update())).one_or_none()
         if environment is None:
@@ -317,7 +341,7 @@ async def plan_deception_revision(environment_id: int, request: PlanDeceptionRev
                 DeceptionRevision.kind == DeceptionRevisionKind.ADAPTIVE,
                 DeceptionRevision.status == DeceptionRevisionStatus.APPLIED,
                 DeceptionRevision.evaluation_status == DeceptionEvaluationStatus.PENDING,
-                DeceptionRevision.observation_deadline <= datetime.now(),
+                DeceptionRevision.observation_deadline <= utc_now(),
             ).limit(1))).first()
             if unresolved_evaluation is not None:
                 return DeceptionRevisionMutationResult(
@@ -366,6 +390,13 @@ async def plan_deception_revision(environment_id: int, request: PlanDeceptionRev
             request,
             decision.kind == DeceptionRevisionKind.INITIAL,
         )
+        plan_snapshot = request.model_dump(mode="json")
+        plan_sha256 = hashlib.sha256(json.dumps(
+            plan_snapshot,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")).hexdigest()
         revision = DeceptionRevision(
             environment_id=environment_id,
             version=next_version,
@@ -374,7 +405,7 @@ async def plan_deception_revision(environment_id: int, request: PlanDeceptionRev
                 DeceptionRevisionStatus.PENDING_APPROVAL
                 if requires_approval or (
                     decision.kind == DeceptionRevisionKind.ADAPTIVE
-                    and environment.adaptation_mode.value == "manual_approval"
+                    and environment.adaptation_mode == DeceptionAdaptationMode.MANUAL_APPROVAL
                 )
                 else DeceptionRevisionStatus.PLANNED
             ),
@@ -382,6 +413,8 @@ async def plan_deception_revision(environment_id: int, request: PlanDeceptionRev
             target_persona=request.target_persona,
             target_services=[item.model_dump(mode="json") for item in request.target_services],
             container_spec=request.container_spec.model_dump(mode="json"),
+            plan_snapshot=plan_snapshot,
+            plan_sha256=plan_sha256,
             execution_container_id=(container.id if container is not None else None),
             trigger_event_ids=request.trigger_event_ids,
             trigger_signal_ids=list(dict.fromkeys(request.trigger_signal_ids)),
@@ -391,11 +424,11 @@ async def plan_deception_revision(environment_id: int, request: PlanDeceptionRev
             observation_window_seconds=request.observation_window_seconds,
             evaluation_status=DeceptionEvaluationStatus.PENDING,
             source_incident_id=incident_id,
-            risk_level=(type(request.risk_level).HIGH if requires_approval else request.risk_level),
+            risk_level=(DeceptionRiskLevel.HIGH if requires_approval else request.risk_level),
             approval_reason=request.approval_reason,
             created_by_agent_code=agent_code,
             created_from_session_id=session_id,
-            created_at=datetime.now(),
+            created_at=utc_now(),
         )
         session.add(revision)
         await session.flush()
@@ -412,7 +445,7 @@ async def plan_deception_revision(environment_id: int, request: PlanDeceptionRev
         environment.status = decision.environment_status
         environment.active_revision_id = revision.id
         environment.last_error = ""
-        environment.updated_at = datetime.now()
+        environment.updated_at = utc_now()
         session.add(environment)
         await add_audit_event(
             session,
@@ -609,7 +642,7 @@ async def decide_deception_revision(environment_id: int, revision_id: int, *, ap
             )
         revision.status = DeceptionRevisionStatus.PLANNED if approve else DeceptionRevisionStatus.REJECTED
         revision.approval_reason = reason
-        revision.resolved_at = None if approve else datetime.now()
+        revision.resolved_at = None if approve else utc_now()
         session.add(revision)
         if not approve:
             terminal = reject_revision(DeceptionLifecycle.from_environment(environment), revision_id)
@@ -639,6 +672,26 @@ async def get_deception_environment_for_user(id: int, *, user_id: int, user_role
         if environment is None or (user_role != SystemUserRole.ADMIN and environment.owner_id != user_id):
             return None
         return DeceptionEnvironmentSchema.model_validate(environment)
+
+
+async def get_deception_environment_session_for_user(
+    id: int,
+    *,
+    user_id: int,
+    user_role: SystemUserRole,
+):
+    async with get_async_session() as session:
+        environment = await session.get(DeceptionEnvironment, id)
+        if environment is None or (
+            user_role != SystemUserRole.ADMIN and environment.owner_id != user_id
+        ):
+            return None
+        session_id = (await session.exec(select(AgentSession.id).where(
+            AgentSession.environment_id == id
+        ))).one_or_none()
+    if session_id is None:
+        return None
+    return await session_summary(session_id, user_id, user_role)
 
 
 async def query_deception_environments_for_user(*, page=1, size=RESOURCE_PAGE_SIZE, keyword="", status=None, user_id: int, user_role: SystemUserRole):
@@ -671,7 +724,7 @@ async def update_deception_environment(id: int, request: UpdateDeceptionEnvironm
             return DeceptionMutationResult(environment=None, forbidden=True)
         for field, value in request.model_dump(exclude_unset=True).items():
             setattr(environment, field, value)
-        environment.updated_at = datetime.now()
+        environment.updated_at = utc_now()
         session.add(environment)
         env_schema = DeceptionEnvironmentSchema.model_validate(environment)
     return DeceptionMutationResult(environment=env_schema)
@@ -694,6 +747,7 @@ async def get_deception_references_for_user(
 
 
 async def set_deception_environment_status(id: int, status: DeceptionEnvironmentStatus, *, user_id: int, user_role: SystemUserRole):
+    console_session_id = ""
     async with get_async_session() as session, session.begin():
         environment = (await session.exec(select(DeceptionEnvironment).where(DeceptionEnvironment.id == id).with_for_update())).one_or_none()
         if environment is None:
@@ -708,8 +762,12 @@ async def set_deception_environment_status(id: int, status: DeceptionEnvironment
         if status not in allowed.get(environment.status, set()):
             return DeceptionMutationResult(environment=None, conflict=True, message="environment cannot transition to the requested state")
         environment.status = status
-        environment.updated_at = datetime.now()
+        environment.updated_at = utc_now()
         session.add(environment)
+        if status == DeceptionEnvironmentStatus.RETIRED:
+            console_session_id = (await session.exec(select(AgentSession.id).where(
+                AgentSession.environment_id == id
+            ))).one_or_none() or ""
         await add_audit_event(
             session,
             environment_id=id,
@@ -722,6 +780,11 @@ async def set_deception_environment_status(id: int, status: DeceptionEnvironment
         )
         env_schema = DeceptionEnvironmentSchema.model_validate(environment)
     if status == DeceptionEnvironmentStatus.RETIRED:
+        if console_session_id:
+            await request_session_cancellation(
+                [console_session_id],
+                reason="Deception environment was retired.",
+            )
         try:
             await delete_reference_bundle(id)
         except Exception:
@@ -769,4 +832,4 @@ def _requires_approval(request: PlanDeceptionRevisionRequest, initial: bool) -> 
         command_text = "\n".join((step.apply_command, step.verify_command, step.rollback_command))
         if any(fragment.casefold() in command_text.casefold() for fragment in risky_fragments):
             return True
-    return request.risk_level.value == "high"
+    return request.risk_level == DeceptionRiskLevel.HIGH

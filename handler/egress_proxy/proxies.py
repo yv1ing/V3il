@@ -4,7 +4,7 @@ from handler.common.http import raise_api_error
 from schema.common.responses import CommonResponse
 from schema.egress_proxy.proxies import (
     CreateEgressProxyRequest,
-    DeleteEgressProxyResponse,
+    RetireEgressProxyResponse,
     EgressProxySchema,
     QueryEgressProxiesResponse,
     TestEgressProxyResponse,
@@ -13,7 +13,6 @@ from schema.egress_proxy.proxies import (
 from service.common.pagination import paginated_payload
 from service.egress_proxy.proxies import (
     create_egress_proxy,
-    delete_egress_proxy,
     query_egress_proxies,
     test_egress_proxy,
     update_egress_proxy,
@@ -57,13 +56,13 @@ async def update_egress_proxy_handler(id: int, request: UpdateEgressProxyRequest
     return CommonResponse(data=result.proxy)
 
 
-async def delete_egress_proxy_handler(id: int) -> CommonResponse:
-    result = await delete_egress_proxy(id)
+async def retire_egress_proxy_handler(id: int) -> CommonResponse:
+    result = await retire_egress_proxy(id)
     if result.not_found:
         raise_api_error(HTTPStatus.NOT_FOUND, "egress proxy not found")
-    if not result.deleted:
+    if not result.retired:
         raise_api_error(HTTPStatus.BAD_REQUEST, result.message)
-    return CommonResponse(data=DeleteEgressProxyResponse(id=id))
+    return CommonResponse(data=RetireEgressProxyResponse(id=id))
 
 
 async def test_egress_proxy_handler(id: int) -> CommonResponse:
@@ -87,3 +86,4 @@ async def query_egress_proxies_handler(page: int, size: int, keyword: str) -> Co
             proxies.items,
         ),
     ))
+    retire_egress_proxy,

@@ -1,11 +1,11 @@
 import { Tag } from "@douyinfe/semi-ui";
 import { Boxes, Network, Route } from "lucide-react";
 import { useMemo, useState } from "react";
-import { createSandboxImage, deleteSandboxImage, querySandboxImages } from "../../shared/api/sandboxImages";
+import { createSandboxImage, querySandboxImages, retireSandboxImage } from "../../shared/api/sandboxImages";
 import type { CreateSandboxImageRequest, SandboxImage } from "../../shared/api/types";
 import { PagedResourceTable } from "../../shared/components/PagedResourceTable";
 import type { ResourceColumn } from "../../shared/components/ResourceTable";
-import { DeleteRowAction, ResourceIdentity, ResourceText, RowActions } from "../../shared/components/ResourceCells";
+import { ResourceIdentity, ResourceText, RetireRowAction, RowActions } from "../../shared/components/ResourceCells";
 import { useAdminResourceHeader } from "../../shared/hooks/useAdminResourceHeader";
 import { usePagedResourceList } from "../../shared/hooks/usePagedResourceList";
 import { useResourceAction } from "../../shared/hooks/useResourceAction";
@@ -17,8 +17,8 @@ export function SandboxImagesPage() {
   const images = usePagedResourceList<SandboxImage>({ query: querySandboxImages });
   const [modalOpen, setModalOpen] = useState(false);
 
-  const { run: deleteImage, busyId: deletingId } = useResourceAction<SandboxImage>(
-    (image) => deleteSandboxImage(image.id), images.loadItems,
+  const { run: retireImage, busyId: retiringId } = useResourceAction<SandboxImage>(
+    (image) => retireSandboxImage(image.id), images.loadItems,
   );
 
   useAdminResourceHeader({
@@ -67,8 +67,8 @@ export function SandboxImagesPage() {
       key: "actions", header: "Actions", width: "104px",
       render: (image) => (
         <RowActions>
-          <DeleteRowAction title="Delete image" content={`Delete ${image.image_name}?`} label={`Delete ${image.image_name}`}
-            loading={deletingId === image.id} onConfirm={() => void deleteImage(image)}
+          <RetireRowAction title="Retire image" content={`Retire ${image.image_name}?`} label={`Retire ${image.image_name}`}
+            loading={retiringId === image.id} onConfirm={() => void retireImage(image)}
           />
         </RowActions>
       ),

@@ -9,8 +9,8 @@ export function showApiSuccess(response: CommonResponsePayload) {
 }
 
 export function showApiError(error: unknown) {
-  if (error instanceof ApiError && error.response?.message) {
-    Toast.error(error.response.message);
+  if (error instanceof ApiError && error.problem?.detail) {
+    Toast.error(error.problem.detail);
     return;
   }
 

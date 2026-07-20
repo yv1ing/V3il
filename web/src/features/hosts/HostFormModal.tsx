@@ -1,6 +1,7 @@
 import { Input, InputNumber, Select, TextArea } from "@douyinfe/semi-ui";
 import { KeyRound, Network, PlugZap, Server, ShieldCheck, User } from "lucide-react";
 import { useEffect, useState } from "react";
+import { FIELD_CONSTRAINTS, FIELD_DEFAULTS } from "../../shared/api/generated/constants";
 import type { CreateManagedHostRequest, ManagedHost, UpdateManagedHostRequest } from "../../shared/api/types";
 import { FormField } from "../../shared/components/FormField";
 import { ResourceModal } from "../../shared/components/ResourceModal";
@@ -8,8 +9,9 @@ import { ResourceModal } from "../../shared/components/ResourceModal";
 type HostFormValues = CreateManagedHostRequest;
 
 const DEFAULT_LOCAL_HOST_ID = 1;
-const DEFAULT_DOCKER_PLAIN_PORT = 2375;
+const DEFAULT_DOCKER_PLAIN_PORT = FIELD_DEFAULTS.CreateManagedHostRequest.docker_management_port;
 const DEFAULT_DOCKER_TLS_PORT = 2376;
+const HOST_CONSTRAINTS = FIELD_CONSTRAINTS.CreateManagedHostRequest;
 
 type HostFormModalProps = {
   open: boolean;
@@ -41,11 +43,11 @@ const EMPTY_CERTIFICATES: Pick<HostFormValues, HostCertField> = {
 
 const EMPTY: HostFormValues = {
   ip_address: "",
-  ssh_port: 22,
+  ssh_port: FIELD_DEFAULTS.CreateManagedHostRequest.ssh_port,
   host_account: "root",
   host_password: "",
   docker_management_port: DEFAULT_DOCKER_PLAIN_PORT,
-  docker_tls_enabled: false,
+  docker_tls_enabled: FIELD_DEFAULTS.CreateManagedHostRequest.docker_tls_enabled,
   ...EMPTY_CERTIFICATES,
 };
 
@@ -133,14 +135,14 @@ export function HostFormModal({ open, host, saving, onCancel, onCreate, onUpdate
     >
       <div className="host-form-row">
         <FormField label="IP Address">
-          <Input prefix={<Server size={16} />} value={values.ip_address} maxLength={255} required
+          <Input prefix={<Server size={16} />} value={values.ip_address} maxLength={HOST_CONSTRAINTS.ip_address.maxLength} required
             autoComplete="off"
             disabled={isLocalHostEdit}
             onChange={(value) => setValue("ip_address", value)}
           />
         </FormField>
         <FormField label="SSH Port">
-          <InputNumber prefix={<Network size={16} />} value={values.ssh_port} min={1} max={65535}
+          <InputNumber prefix={<Network size={16} />} value={values.ssh_port} min={HOST_CONSTRAINTS.ssh_port.minimum} max={HOST_CONSTRAINTS.ssh_port.maximum}
             disabled={isLocalHostEdit}
             onChange={(value) => typeof value === "number" && setValue("ssh_port", value)}
           />
@@ -148,14 +150,14 @@ export function HostFormModal({ open, host, saving, onCancel, onCreate, onUpdate
       </div>
       <div className="host-form-row">
         <FormField label="Host Account">
-          <Input prefix={<User size={16} />} value={values.host_account} maxLength={128} required
+          <Input prefix={<User size={16} />} value={values.host_account} maxLength={HOST_CONSTRAINTS.host_account.maxLength} required
             autoComplete="off"
             disabled={isLocalHostEdit}
             onChange={(value) => setValue("host_account", value)}
           />
         </FormField>
         <FormField label="Host Password">
-          <Input mode="password" prefix={<KeyRound size={16} />} value={values.host_password} maxLength={512} required
+          <Input mode="password" prefix={<KeyRound size={16} />} value={values.host_password} maxLength={HOST_CONSTRAINTS.host_password.maxLength} required
             autoComplete="new-password"
             disabled={isLocalHostEdit}
             onChange={(value) => setValue("host_password", value)}
@@ -164,7 +166,7 @@ export function HostFormModal({ open, host, saving, onCancel, onCreate, onUpdate
       </div>
       <div className="host-form-row">
         <FormField label="Docker Management Port">
-          <InputNumber prefix={<PlugZap size={16} />} value={values.docker_management_port} min={1} max={65535}
+          <InputNumber prefix={<PlugZap size={16} />} value={values.docker_management_port} min={HOST_CONSTRAINTS.docker_management_port.minimum} max={HOST_CONSTRAINTS.docker_management_port.maximum}
             onChange={(value) => typeof value === "number" && setValue("docker_management_port", value)}
           />
         </FormField>

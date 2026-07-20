@@ -1,162 +1,190 @@
 import asyncio
 from http import HTTPStatus
 
-from fastapi.websockets import WebSocketState
-from fastapi import WebSocket, WebSocketDisconnect, status as ws_status
+from fastapi import Request, Response, WebSocket, WebSocketDisconnect, status as ws_status
 from fastapi.responses import FileResponse
+from fastapi.websockets import WebSocketState
+from pydantic import TypeAdapter, ValidationError
 
-from core.runtime.session import get_agent_pool
 from handler.common.http import raise_api_error
-from handler.common.websocket import (
-    authenticate_ws_token,
-    cancel_ws_task as _cancel_task,
-    close_ws_silently as _close_silently,
-)
-from logger import get_logger
+from handler.common.websocket import authenticate_ws_token, close_ws_silently
 from middleware.system_user import AuthUser, resolve_current_user
-from schema.agent.events import AgentEventSchema
+from schema.agent.events import AgentAckFrame, AgentClientFrame, AgentHeartbeatFrame, AgentServerFrame
 from schema.agent.sessions import (
+    AgentControlResponse,
     AgentSessionSummarySchema,
-    AgentTurnRequest,
     AgentTurnResponse,
+    AgentToolInvocationSchema,
+    CreateAgentSessionTurnRequest,
     ListAgentEventsResponse,
     ListAgentSessionsResponse,
+    ListAgentToolInvocationRecoveriesResponse,
+    ResolveAgentToolInvocationRequest,
+    SubmitAgentSessionTurnRequest,
     UpdateAgentSessionSandboxContainerRequest,
     UpdateAgentSessionTitleRequest,
 )
-from schema.common.responses import CommonResponse
-from service.agent import runtime as agent_runtime
+from schema.sandbox.async_jobs import (
+    ListSandboxAsyncJobRecoveriesResponse,
+    ResolveSandboxAsyncJobRequest,
+    SandboxAsyncJobSnapshot,
+)
 from service.agent import reports as agent_reports
-from service.agent import sessions as agent_sessions
+from service.agent import repository
+from service.agent import runtime as agent_runtime
+from service.agent import tool_invocations as agent_tool_invocations
+from service.agent.supervisor import AgentRuntimeSupervisor, AgentStreamSubscription
 from service.common.pagination import paginated_payload
+from service.sandbox import async_jobs as sandbox_async_jobs
+from utils.time import utc_now
 
 
-logger = get_logger(__name__)
+_client_frame_adapter = TypeAdapter(AgentClientFrame)
+_ACCESS_CHECK_INTERVAL_SECONDS = 30
+
+
+def runtime_from_request(request: Request) -> AgentRuntimeSupervisor:
+    runtime = getattr(request.app.state, "agent_runtime", None)
+    if not isinstance(runtime, AgentRuntimeSupervisor):
+        raise RuntimeError("agent runtime is unavailable")
+    return runtime
 
 
 async def create_agent_session_turn_handler(
-    request: AgentTurnRequest,
+    request: Request,
+    payload: CreateAgentSessionTurnRequest,
     user: AuthUser,
-) -> CommonResponse[AgentTurnResponse]:
+) -> AgentTurnResponse:
     try:
-        session_id, events = await agent_runtime.submit_new_chat_turn(
-            content=request.content,
+        return await agent_runtime.submit_new_chat_turn(
+            supervisor=runtime_from_request(request),
+            content=payload.content,
             user=user,
-            sandbox_container_id=request.sandbox_container_id,
-            requested_agent_code=request.agent_code,
+            sandbox_container_id=payload.sandbox_container_id,
+            requested_agent_code=payload.agent_code,
         )
     except Exception as exc:
         _raise_runtime_error(exc)
         raise
-    return await _turn_response(session_id, user, events)
 
 
 async def submit_agent_session_turn_handler(
+    request: Request,
     session_id: str,
-    request: AgentTurnRequest,
+    payload: SubmitAgentSessionTurnRequest,
     user: AuthUser,
-) -> CommonResponse[AgentTurnResponse]:
+) -> AgentTurnResponse:
     try:
-        events = await agent_runtime.submit_user_turn(
+        return await agent_runtime.submit_user_turn(
+            supervisor=runtime_from_request(request),
             session_id=session_id,
-            content=request.content,
+            content=payload.content,
             user=user,
-            sandbox_container_id=request.sandbox_container_id,
-            requested_agent_code=request.agent_code,
+            requested_agent_code=payload.agent_code,
         )
     except Exception as exc:
         _raise_runtime_error(exc)
         raise
-    return await _turn_response(session_id, user, events)
 
 
-async def interrupt_agent_session_handler(session_id: str, user: AuthUser) -> CommonResponse[AgentTurnResponse]:
+async def interrupt_agent_session_handler(
+    request: Request,
+    session_id: str,
+    user: AuthUser,
+) -> AgentControlResponse:
     try:
-        events = await agent_runtime.interrupt_turn(session_id=session_id, user=user)
+        return await agent_runtime.interrupt_turn(
+            supervisor=runtime_from_request(request), session_id=session_id, user=user,
+        )
     except Exception as exc:
         _raise_runtime_error(exc)
         raise
-    return await _turn_response(session_id, user, events)
 
 
-async def cancel_agent_session_tasks_handler(session_id: str, user: AuthUser) -> CommonResponse[AgentTurnResponse]:
+async def cancel_agent_session_tasks_handler(
+    request: Request,
+    session_id: str,
+    user: AuthUser,
+) -> AgentControlResponse:
     try:
-        events = await agent_runtime.cancel_all_tasks(session_id=session_id, user=user)
+        return await agent_runtime.cancel_all_tasks(
+            supervisor=runtime_from_request(request), session_id=session_id, user=user,
+        )
     except Exception as exc:
         _raise_runtime_error(exc)
         raise
-    return await _turn_response(session_id, user, events)
 
 
-async def delete_agent_session_handler(session_id: str, user: AuthUser) -> CommonResponse[None]:
-    deleted = await agent_sessions.delete_session(
-        session_id,
-        user_id=user.id,
-        user_role=user.role,
-    )
-    if not deleted:
-        raise_api_error(HTTPStatus.NOT_FOUND, "agent session not found")
-    return CommonResponse(message="agent session deleted")
+async def archive_agent_session_handler(session_id: str, user: AuthUser) -> Response:
+    try:
+        archived = await repository.archive_agent_session(session_id, user.id, user.role)
+    except RuntimeError as exc:
+        raise_api_error(HTTPStatus.CONFLICT, str(exc))
+    if not archived:
+        raise_api_error(HTTPStatus.NOT_FOUND, "agent chat session not found")
+    return Response(status_code=HTTPStatus.NO_CONTENT)
 
 
 async def update_agent_session_title_handler(
     session_id: str,
-    request: UpdateAgentSessionTitleRequest,
+    payload: UpdateAgentSessionTitleRequest,
     user: AuthUser,
-) -> CommonResponse[AgentSessionSummarySchema]:
-    session = await agent_sessions.update_session_title(
-        session_id=session_id,
-        title=request.title,
-        user_id=user.id,
-        user_role=user.role,
-    )
-    if session is None:
+) -> AgentSessionSummarySchema:
+    summary = await repository.update_title(session_id, payload.title, user.id, user.role)
+    if summary is None:
         raise_api_error(HTTPStatus.NOT_FOUND, "agent session not found")
-    return CommonResponse(message="agent session title updated", data=session)
+    return summary
 
 
 async def update_agent_session_sandbox_container_handler(
     session_id: str,
-    request: UpdateAgentSessionSandboxContainerRequest,
+    payload: UpdateAgentSessionSandboxContainerRequest,
     user: AuthUser,
-) -> CommonResponse[AgentSessionSummarySchema]:
+) -> AgentSessionSummarySchema:
     try:
-        session = await agent_runtime.update_selected_sandbox_container(
+        return await agent_runtime.update_selected_sandbox_container(
             session_id=session_id,
-            sandbox_container_id=request.sandbox_container_id,
+            sandbox_container_id=payload.sandbox_container_id,
             user=user,
         )
     except Exception as exc:
         _raise_runtime_error(exc)
         raise
-    return CommonResponse(message="sandbox container updated", data=session)
 
 
 async def list_agent_sessions_handler(
     page: int,
     size: int,
     user: AuthUser,
-    include_scoped: bool = False,
-) -> CommonResponse[ListAgentSessionsResponse]:
-    sessions = await agent_sessions.list_sessions(
+    include_scoped: bool,
+) -> ListAgentSessionsResponse:
+    result = await repository.list_sessions(
         page=page,
         size=size,
         user_id=user.id,
         user_role=user.role,
         include_scoped=include_scoped,
     )
-    return CommonResponse(data=ListAgentSessionsResponse(
-        **paginated_payload(sessions, sessions.items)
-    ))
+    return ListAgentSessionsResponse(**paginated_payload(result, result.items))
+
+
+async def get_agent_session_handler(
+    session_id: str,
+    user: AuthUser,
+) -> AgentSessionSummarySchema:
+    summary = await repository.session_summary(session_id, user.id, user.role)
+    if summary is None:
+        raise_api_error(HTTPStatus.NOT_FOUND, "agent session not found")
+    return summary
 
 
 async def list_agent_events_handler(
     session_id: str,
     user: AuthUser,
-    before_seq: int | None = None,
-    limit: int = agent_sessions.DEFAULT_REPLAY_EVENT_PAGE_SIZE,
-) -> CommonResponse[ListAgentEventsResponse]:
-    result = await agent_sessions.replay_session_events_page(
+    before_seq: int | None,
+    limit: int,
+) -> ListAgentEventsResponse:
+    result = await repository.replay_events(
         session_id=session_id,
         user_id=user.id,
         user_role=user.role,
@@ -166,12 +194,94 @@ async def list_agent_events_handler(
     if result is None:
         raise_api_error(HTTPStatus.NOT_FOUND, "agent session not found")
     events, has_more, next_before_seq = result
-    return CommonResponse(data=ListAgentEventsResponse(
+    return ListAgentEventsResponse(
         session_id=session_id,
         items=events,
         has_more=has_more,
         next_before_seq=next_before_seq,
-    ))
+    )
+
+
+async def list_agent_tool_invocation_recoveries_handler(
+    session_id: str,
+    user: AuthUser,
+) -> ListAgentToolInvocationRecoveriesResponse:
+    items = await agent_tool_invocations.list_recovery_required_invocations(
+        session_id=session_id,
+        user_id=user.id,
+        user_role=user.role,
+    )
+    if items is None:
+        raise_api_error(HTTPStatus.NOT_FOUND, "agent session not found")
+    return ListAgentToolInvocationRecoveriesResponse(session_id=session_id, items=items)
+
+
+async def resolve_agent_tool_invocation_handler(
+    request: Request,
+    session_id: str,
+    invocation_id: str,
+    payload: ResolveAgentToolInvocationRequest,
+    user: AuthUser,
+) -> AgentToolInvocationSchema:
+    try:
+        result = await agent_tool_invocations.resolve_invocation(
+            session_id=session_id,
+            invocation_id=invocation_id,
+            resolution=payload,
+            user_id=user.id,
+            user_role=user.role,
+        )
+    except agent_tool_invocations.ToolInvocationResolutionConflict as exc:
+        raise_api_error(HTTPStatus.CONFLICT, str(exc))
+    if result is None:
+        raise_api_error(HTTPStatus.NOT_FOUND, "tool invocation recovery not found")
+    invocation, events = result
+    runtime = runtime_from_request(request)
+    for event in events:
+        runtime.publish_durable_event(event)
+    runtime.notify()
+    return invocation
+
+
+async def list_sandbox_async_job_recoveries_handler(
+    session_id: str,
+    user: AuthUser,
+) -> ListSandboxAsyncJobRecoveriesResponse:
+    items = await sandbox_async_jobs.list_recovery_required_jobs(
+        session_id=session_id,
+        user_id=user.id,
+        user_role=user.role,
+    )
+    if items is None:
+        raise_api_error(HTTPStatus.NOT_FOUND, "agent session not found")
+    return ListSandboxAsyncJobRecoveriesResponse(session_id=session_id, items=items)
+
+
+async def resolve_sandbox_async_job_handler(
+    request: Request,
+    session_id: str,
+    job_id: str,
+    payload: ResolveSandboxAsyncJobRequest,
+    user: AuthUser,
+) -> SandboxAsyncJobSnapshot:
+    try:
+        result = await sandbox_async_jobs.resolve_recovery_required_job(
+            session_id=session_id,
+            run_id=job_id,
+            resolution=payload,
+            user_id=user.id,
+            user_role=user.role,
+        )
+    except sandbox_async_jobs.SandboxJobResolutionConflict as exc:
+        raise_api_error(HTTPStatus.CONFLICT, str(exc))
+    if result is None:
+        raise_api_error(HTTPStatus.NOT_FOUND, "Sandbox command recovery not found")
+    job, events = result
+    runtime = runtime_from_request(request)
+    for event in events:
+        runtime.publish_durable_event(event)
+    runtime.notify()
+    return job
 
 
 async def download_agent_report_handler(report_id: str, user: AuthUser) -> FileResponse:
@@ -181,11 +291,9 @@ async def download_agent_report_handler(report_id: str, user: AuthUser) -> FileR
         raise_api_error(HTTPStatus.BAD_REQUEST, str(exc))
     except FileNotFoundError as exc:
         raise_api_error(HTTPStatus.NOT_FOUND, str(exc))
-
     session_id = agent_reports.report_session_id(report_path)
-    if not session_id or not await agent_sessions.can_access_session(session_id, user.id, user.role):
+    if not session_id or await repository.get_accessible_session(session_id, user.id, user.role) is None:
         raise_api_error(HTTPStatus.NOT_FOUND, "report file not found")
-
     return FileResponse(
         report_path,
         media_type="text/markdown; charset=utf-8",
@@ -195,135 +303,95 @@ async def download_agent_report_handler(report_id: str, user: AuthUser) -> FileR
 
 async def handle_agent_stream(websocket: WebSocket, session_id: str, token: str) -> None:
     user = await authenticate_ws_token(token)
-    if user is None:
+    if user is None or await repository.get_accessible_session(session_id, user.id, user.role) is None:
         await websocket.close(code=ws_status.WS_1008_POLICY_VIOLATION)
         return
-    if not await agent_sessions.can_access_session(session_id, user.id, user.role):
-        await websocket.close(code=ws_status.WS_1008_POLICY_VIOLATION)
+    runtime = getattr(websocket.app.state, "agent_runtime", None)
+    if not isinstance(runtime, AgentRuntimeSupervisor):
+        await websocket.close(code=ws_status.WS_1011_INTERNAL_ERROR)
         return
-
     await websocket.accept()
-    session = None
-    event_queue: asyncio.Queue[AgentEventSchema | None] | None = None
-    reader: asyncio.Task | None = None
-    forwarder: asyncio.Task | None = None
-
+    subscription = await runtime.subscribe(session_id)
+    reader = asyncio.create_task(
+        _consume_websocket(websocket, runtime, session_id, subscription),
+        name=f"agent-stream-reader-{session_id}",
+    )
+    forwarder = asyncio.create_task(
+        _forward_frames(websocket, subscription, session_id, user),
+        name=f"agent-stream-forwarder-{session_id}",
+    )
     try:
-        session, event_queue = await get_agent_pool().subscribe(session_id)
-        reader = asyncio.create_task(_consume_websocket(websocket), name=f"agent-stream-reader-{session_id}")
-        forwarder = asyncio.create_task(_forward_events(
-            websocket, event_queue, session_id, user,
-        ), name=f"agent-stream-forwarder-{session_id}")
-        done, _ = await asyncio.wait(
-            {reader, forwarder},
-            return_when=asyncio.FIRST_COMPLETED,
-        )
+        done, pending = await asyncio.wait({reader, forwarder}, return_when=asyncio.FIRST_COMPLETED)
         for task in done:
             task.result()
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
     except WebSocketDisconnect:
         pass
-    except Exception:
-        logger.exception("agent stream failed for session=%s", session_id)
-        await _close_silently(websocket)
     finally:
-        if session is not None and event_queue is not None:
-            session.unsubscribe(event_queue)
-        await _cancel_task(reader)
-        await _cancel_task(forwarder)
+        runtime.unsubscribe(session_id, subscription)
+        reader.cancel()
+        forwarder.cancel()
+        await asyncio.gather(reader, forwarder, return_exceptions=True)
 
 
-async def _consume_websocket(websocket: WebSocket) -> None:
-    while True:
-        try:
-            message = await websocket.receive()
-        except RuntimeError as exc:
-            if "disconnect message has been received" not in str(exc):
-                raise
-            return
-        if message.get("type") == "websocket.disconnect":
-            return
-
-
-async def _send_event(
+async def _consume_websocket(
     websocket: WebSocket,
-    event: AgentEventSchema,
-) -> bool:
-    if (
-        websocket.client_state != WebSocketState.CONNECTED
-        or websocket.application_state != WebSocketState.CONNECTED
-    ):
+    runtime: AgentRuntimeSupervisor,
+    session_id: str,
+    subscription: AgentStreamSubscription,
+) -> None:
+    replay_initialized = False
+    while True:
+        raw = await websocket.receive_text()
+        try:
+            frame = _client_frame_adapter.validate_json(raw)
+        except ValidationError:
+            await close_ws_silently(websocket, code=ws_status.WS_1003_UNSUPPORTED_DATA)
+            return
+        if isinstance(frame, AgentAckFrame) and not replay_initialized:
+            replay_initialized = True
+            await runtime.replay_from(session_id, subscription, frame.durable_seq)
+
+
+async def _forward_frames(websocket, subscription: AgentStreamSubscription, session_id, user) -> None:
+    loop = asyncio.get_running_loop()
+    next_check = loop.time() + _ACCESS_CHECK_INTERVAL_SECONDS
+    while True:
+        now = loop.time()
+        if now >= next_check:
+            current = await resolve_current_user(user)
+            if current is None or await repository.get_accessible_session(
+                session_id, current.id, current.role
+            ) is None:
+                await close_ws_silently(websocket, code=ws_status.WS_1008_POLICY_VIOLATION)
+                return
+            next_check = loop.time() + _ACCESS_CHECK_INTERVAL_SECONDS
+
+        timeout = max(0.0, next_check - loop.time())
+        try:
+            frame = await asyncio.wait_for(subscription.queue.get(), timeout=timeout)
+        except TimeoutError:
+            frame = AgentHeartbeatFrame(sent_at=utc_now())
+        if frame is None:
+            return
+        if not await _send_frame(websocket, frame):
+            return
+
+
+async def _send_frame(websocket: WebSocket, frame: AgentServerFrame) -> bool:
+    if websocket.client_state != WebSocketState.CONNECTED or websocket.application_state != WebSocketState.CONNECTED:
         return False
     try:
-        await websocket.send_text(event.model_dump_json())
+        await websocket.send_text(frame.model_dump_json())
         return True
     except Exception:
-        logger.debug("failed to send agent event to websocket", exc_info=True)
         return False
-
-
-_ACCESS_CHECK_INTERVAL_SECONDS = 30
-
-async def _forward_events(
-    websocket: WebSocket,
-    queue: asyncio.Queue[AgentEventSchema | None],
-    session_id: str,
-    user: AuthUser,
-) -> None:
-    try:
-        loop = asyncio.get_running_loop()
-        next_access_check = loop.time() + _ACCESS_CHECK_INTERVAL_SECONDS
-        while True:
-            timeout = max(0.0, next_access_check - loop.time())
-            try:
-                event = await asyncio.wait_for(queue.get(), timeout=timeout)
-            except asyncio.TimeoutError:
-                event = None
-                timed_out = True
-            else:
-                timed_out = False
-
-            if timed_out or loop.time() >= next_access_check:
-                next_access_check = loop.time() + _ACCESS_CHECK_INTERVAL_SECONDS
-                current_user = await resolve_current_user(user)
-                if current_user is None or not await agent_sessions.can_access_session(
-                    session_id,
-                    current_user.id,
-                    current_user.role,
-                ):
-                    await _close_silently(websocket, code=ws_status.WS_1008_POLICY_VIOLATION)
-                    return
-            if timed_out:
-                continue
-            if event is None:
-                await _close_silently(websocket, code=ws_status.WS_1000_NORMAL_CLOSURE)
-                return
-            if not await _send_event(websocket, event):
-                return
-    except asyncio.CancelledError:
-        raise
-    except Exception:
-        logger.debug("agent event forwarding stopped", exc_info=True)
-
-
-async def _turn_response(
-    session_id: str,
-    user: AuthUser,
-    events: list[AgentEventSchema],
-) -> CommonResponse[AgentTurnResponse]:
-    summary = await agent_sessions.session_summary(
-        session_id,
-        user_id=user.id,
-        user_role=user.role,
-    )
-    if summary is None:
-        raise_api_error(HTTPStatus.NOT_FOUND, "agent session not found")
-    return CommonResponse(data=AgentTurnResponse(session_id=session_id, session=summary, events=events))
 
 
 def _raise_runtime_error(exc: Exception) -> None:
-    if isinstance(exc, agent_runtime.SessionNotRunnableError):
-        raise_api_error(HTTPStatus.BAD_REQUEST, str(exc))
-    if isinstance(exc, agent_runtime.SandboxContainerUnavailableError):
+    if isinstance(exc, (agent_runtime.SessionNotRunnableError, agent_runtime.SandboxContainerUnavailableError, ValueError)):
         raise_api_error(HTTPStatus.BAD_REQUEST, str(exc))
     if isinstance(exc, agent_runtime.AgentUnavailableError):
         raise_api_error(HTTPStatus.BAD_REQUEST, str(exc))

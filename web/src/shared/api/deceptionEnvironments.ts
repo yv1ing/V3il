@@ -9,6 +9,7 @@ import type {
   DeceptionRevisionDecisionRequest,
   ExecuteDeceptionRevisionResponse,
   GetDeceptionEnvironmentResponse,
+  GetDeceptionEnvironmentSessionResponse,
   GetDeceptionReferencesResponse,
   ListObservedWorkloadsResponse,
   PauseDeceptionEnvironmentResponse,
@@ -60,6 +61,11 @@ export const getDeceptionReferences = defineJsonEndpoint<
   [environmentId: number],
   GetDeceptionReferencesResponse
 >("GET", (environmentId) => `${DECEPTION_ENVIRONMENTS_PATH}/${environmentId}/references`);
+
+export const getDeceptionEnvironmentSession = defineJsonEndpoint<
+  [environmentId: number],
+  GetDeceptionEnvironmentSessionResponse
+>("GET", (environmentId) => `${DECEPTION_ENVIRONMENTS_PATH}/${environmentId}/session`);
 
 export const updateDeceptionEnvironment = defineJsonEndpoint<
   [environmentId: number, payload: UpdateDeceptionEnvironmentRequest],

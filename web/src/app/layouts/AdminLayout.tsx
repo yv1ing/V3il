@@ -1,6 +1,6 @@
 import { Avatar, Button } from "@douyinfe/semi-ui";
 import { Activity, LogOut } from "lucide-react";
-import { ReactNode, Suspense, useCallback, useMemo, useState } from "react";
+import { ReactNode, Suspense, useCallback, useMemo, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate, useOutletContext } from "react-router-dom";
 import { SessionList } from "../../features/playground/SessionList";
 import v3ilLogo from "../../assets/v3il-logo.png";
@@ -9,7 +9,7 @@ import { useAuth } from "../../shared/auth/AuthProvider";
 import { SYSTEM_USER_ROLE } from "../../shared/api/generated/constants";
 import { cx } from "../../shared/lib/className";
 import { adminNavigationRoutes } from "../routeManifest";
-import { LOGIN_PATH } from "../routePaths";
+import { AGENT_CONSOLE_PATH, agentSessionPath, LOGIN_PATH } from "../routePaths";
 import { preloadAdminRoute } from "../routePreload";
 
 type AdminLayoutContext = {
@@ -24,6 +24,8 @@ export function AdminLayout() {
   const { signOut, user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const locationRef = useRef(location);
+  locationRef.current = location;
   const [headerActions, setHeaderActionsState] = useState<ReactNode>(null);
   const {
     sessions,
@@ -32,7 +34,7 @@ export function AdminLayout() {
     sessionsHasMore,
     activeSessionId,
     selectSession,
-    deleteSession,
+    archiveSession,
     refreshSessions,
     loadMoreSessions,
   } = useAgentSessionContext();
@@ -43,10 +45,15 @@ export function AdminLayout() {
 
   const handleSelectAgentSession = useCallback((sessionId: string) => {
     selectSession(sessionId);
-    if (!location.pathname.startsWith("/playground")) {
-      navigate("/playground");
+    navigate(agentSessionPath(sessionId));
+  }, [navigate, selectSession]);
+
+  const handleArchiveAgentSession = useCallback(async (sessionId: string) => {
+    const archived = await archiveSession(sessionId);
+    if (archived && locationRef.current.pathname === agentSessionPath(sessionId)) {
+      navigate(AGENT_CONSOLE_PATH);
     }
-  }, [location.pathname, navigate, selectSession]);
+  }, [archiveSession, navigate]);
 
   const outletContext = useMemo<AdminLayoutContext>(
     () => ({ setHeaderActions }),
@@ -116,7 +123,7 @@ export function AdminLayout() {
               hasMore={sessionsHasMore}
               activeSessionId={activeSessionId}
               onSelect={handleSelectAgentSession}
-              onDelete={deleteSession}
+              onArchive={handleArchiveAgentSession}
               onRefreshSessions={refreshSessions}
               onLoadMoreSessions={loadMoreSessions}
             />

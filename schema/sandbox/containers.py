@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -14,6 +14,47 @@ class SandboxContainerStatus(StrEnum):
     PAUSED = "paused"
     STOPPED = "stopped"
     ERROR = "error"
+    REMOVED = "removed"
+
+
+class SandboxContainerProtocol(StrEnum):
+    TCP = "tcp"
+    UDP = "udp"
+
+
+SANDBOX_CONTAINER_STATUS_TRANSITIONS: dict[
+    SandboxContainerStatus,
+    tuple[SandboxContainerStatus, ...],
+] = {
+    SandboxContainerStatus.CREATED: (
+        SandboxContainerStatus.RUNNING,
+        SandboxContainerStatus.ERROR,
+        SandboxContainerStatus.REMOVED,
+    ),
+    SandboxContainerStatus.RUNNING: (
+        SandboxContainerStatus.PAUSED,
+        SandboxContainerStatus.STOPPED,
+        SandboxContainerStatus.ERROR,
+        SandboxContainerStatus.REMOVED,
+    ),
+    SandboxContainerStatus.PAUSED: (
+        SandboxContainerStatus.RUNNING,
+        SandboxContainerStatus.STOPPED,
+        SandboxContainerStatus.ERROR,
+        SandboxContainerStatus.REMOVED,
+    ),
+    SandboxContainerStatus.STOPPED: (
+        SandboxContainerStatus.RUNNING,
+        SandboxContainerStatus.ERROR,
+        SandboxContainerStatus.REMOVED,
+    ),
+    SandboxContainerStatus.ERROR: (
+        SandboxContainerStatus.RUNNING,
+        SandboxContainerStatus.STOPPED,
+        SandboxContainerStatus.REMOVED,
+    ),
+    SandboxContainerStatus.REMOVED: (),
+}
 
 
 class SandboxContainerEgressMode(StrEnum):
@@ -26,7 +67,7 @@ class SandboxContainerEgressMode(StrEnum):
 class SandboxContainerPortMapping(BaseModel):
     container_port: int = Field(ge=1, le=65535)
     host_port: int = Field(ge=1, le=65535)
-    protocol: Literal["tcp", "udp"] = "tcp"
+    protocol: SandboxContainerProtocol = SandboxContainerProtocol.TCP
 
     @field_validator("protocol", mode="before")
     @classmethod
@@ -57,11 +98,13 @@ class SandboxContainerSchema(BaseModel):
     behavior_sensor_id: str
     port_mappings: list[SandboxContainerPortMapping]
     status: SandboxContainerStatus
+    generation: int = Field(ge=0)
     owner_id: int
     owner_username: str
     can_manage: bool
     created_at: datetime
     updated_at: datetime
+    removed_at: datetime | None
 
 
 class SandboxContainerHostOptionSchema(BaseModel):
@@ -112,8 +155,8 @@ class CreateSandboxContainerRequest(BaseModel):
         return self
 
 
-# delete sandbox container response schema (presence implies success)
-class DeleteSandboxContainerResponse(BaseModel):
+# remove sandbox container response schema (presence implies success)
+class RemoveSandboxContainerResponse(BaseModel):
     id: int
 
 

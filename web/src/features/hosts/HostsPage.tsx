@@ -1,17 +1,17 @@
 import { Button, Table, Tag } from "@douyinfe/semi-ui";
 import { Boxes, Download, Pencil, Server, SquareTerminal } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createManagedHost, deleteManagedHost, listManagedHostImages, pullManagedHostImages, removeManagedHostImage, queryManagedHosts, updateManagedHost } from "../../shared/api/hosts";
+import { createManagedHost, listManagedHostImages, pullManagedHostImages, queryManagedHosts, removeManagedHostImage, retireManagedHost, updateManagedHost } from "../../shared/api/hosts";
 import { querySandboxImages } from "../../shared/api/sandboxImages";
 import { showApiError, showApiSuccess } from "../../shared/api/feedback";
-import { RESOURCE_PAGE_SIZE } from "../../shared/api/generated/constants";
+import { PAGINATION_DEFAULT_PAGE_SIZE } from "../../shared/api/generated/constants";
 import type { ManagedHost, ManagedHostImage, SandboxImage } from "../../shared/api/types";
 import { AppModal } from "../../shared/components/AppModal";
 import { AsyncContent } from "../../shared/components/AsyncContent";
 import { PagedResourceTable } from "../../shared/components/PagedResourceTable";
 import { OptionListSelect } from "../../shared/components/OptionListSelect";
 import type { ResourceColumn } from "../../shared/components/ResourceTable";
-import { DeleteRowAction, OwnerCell, ResourceIdentity, ResourceSecretText, RowActionButton, RowActions } from "../../shared/components/ResourceCells";
+import { OwnerCell, RemoveRowAction, ResourceIdentity, ResourceSecretText, RetireRowAction, RowActionButton, RowActions } from "../../shared/components/ResourceCells";
 import { useAdminResourceHeader } from "../../shared/hooks/useAdminResourceHeader";
 import { useOptionList } from "../../shared/hooks/useOptionList";
 import { usePagedResourceList } from "../../shared/hooks/usePagedResourceList";
@@ -29,8 +29,8 @@ export function HostsPage() {
   const [modal, setModal] = useState<ModalState>(null);
   const [imageModalHost, setImageModalHost] = useState<ManagedHost | null>(null);
   const { openHostShell } = useContainerShell();
-  const { run: deleteHost, busyId: deletingHostId } = useResourceAction<ManagedHost>(
-    (host) => deleteManagedHost(host.id),
+  const { run: retireHost, busyId: retiringHostId } = useResourceAction<ManagedHost>(
+    (host) => retireManagedHost(host.id),
     hosts.loadItems,
   );
 
@@ -95,8 +95,8 @@ export function HostsPage() {
           <RowActionButton icon={<Pencil size={15} />} label={`Edit ${host.ip_address}`}
             onClick={() => setModal({ mode: "edit", host })}
           />
-          <DeleteRowAction title="Delete host" content={`Delete ${host.ip_address}?`} label={`Delete ${host.ip_address}`}
-            loading={deletingHostId === host.id} onConfirm={() => void deleteHost(host)}
+          <RetireRowAction title="Retire host" content={`Retire ${host.ip_address}?`} label={`Retire ${host.ip_address}`}
+            loading={retiringHostId === host.id} onConfirm={() => void retireHost(host)}
           />
         </RowActions>
       ),
@@ -253,7 +253,7 @@ function HostImagesModal({ host, onClose }: { host: ManagedHost | null; onClose:
       >
         <Table
           dataSource={hostImages}
-          pagination={{ pageSize: RESOURCE_PAGE_SIZE }}
+          pagination={{ pageSize: PAGINATION_DEFAULT_PAGE_SIZE }}
           size="small"
           rowKey={(record?: ManagedHostImage) => record?.image_id || record?.image_name || ""}
           columns={[
@@ -263,7 +263,7 @@ function HostImagesModal({ host, onClose }: { host: ManagedHost | null; onClose:
           {
             title: "", dataIndex: "image_id", width: 50,
             render: (_value, record) => (
-              <DeleteRowAction title="Remove image" content={`Remove ${(record as ManagedHostImage).image_name || "this image"}?`}
+              <RemoveRowAction title="Remove image" content={`Remove ${(record as ManagedHostImage).image_name || "this image"}?`}
                 label="Remove image" size="small" loading={removingId === (record as ManagedHostImage).image_id}
                 disabled={activeActionRef.current !== null} onConfirm={() => void removeImage(record as ManagedHostImage)}
               />

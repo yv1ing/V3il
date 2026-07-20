@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
 from schema.common.responses import PaginatedResponse
 
@@ -73,7 +73,7 @@ class BehaviorEventPayload(BaseModel):
     sensor_bundle_hash: str = Field(default="", max_length=64)
     deception_artifact_id: int | None = Field(default=None, gt=0)
     summary: str = Field(default="", max_length=4000)
-    attributes: dict[str, Any] = Field(default_factory=dict)
+    attributes: dict[str, JsonValue] = Field(default_factory=dict)
 
     @field_validator(
         "action",
@@ -105,13 +105,13 @@ class BehaviorEventPayload(BaseModel):
     @field_validator("observed_at", mode="after")
     @classmethod
     def normalize_observed_at(cls, value: datetime) -> datetime:
-        if value.tzinfo is None:
-            return value
-        return value.astimezone(timezone.utc).replace(tzinfo=None)
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("observed_at must include a timezone offset")
+        return value.astimezone(timezone.utc)
 
     @field_validator("attributes", mode="after")
     @classmethod
-    def validate_attributes(cls, value: dict[str, Any]) -> dict[str, Any]:
+    def validate_attributes(cls, value: dict[str, JsonValue]) -> dict[str, JsonValue]:
         validated = _validate_behavior_attribute_value(value, depth=0)
         encoded = json.dumps(
             validated,
@@ -246,7 +246,7 @@ class QueryBehaviorEventsResponse(PaginatedResponse[BehaviorEventSchema]):
     pass
 
 
-def _validate_behavior_attribute_value(value: Any, *, depth: int) -> Any:
+def _validate_behavior_attribute_value(value: JsonValue, *, depth: int) -> JsonValue:
     if depth > MAX_BEHAVIOR_ATTRIBUTE_DEPTH:
         raise ValueError(
             f"behavior event attributes cannot exceed depth {MAX_BEHAVIOR_ATTRIBUTE_DEPTH}"

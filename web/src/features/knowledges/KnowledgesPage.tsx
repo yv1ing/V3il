@@ -12,10 +12,10 @@ import {
 import { showApiError } from "../../shared/api/feedback";
 import {
   KNOWLEDGE_DOCUMENT_ACCEPT,
-  KNOWLEDGE_DOCUMENT_INFLIGHT_STATUS_VALUES,
+  KNOWLEDGE_INFLIGHT_STATUSES,
   KNOWLEDGE_DOCUMENT_STATUS_VALUES,
   KNOWLEDGE_GRAPH_EXPANSION_BATCH_SIZE,
-  KNOWLEDGE_GRAPH_MAX_NODES,
+  KNOWLEDGE_GRAPH_MAXIMUM_NODES,
 } from "../../shared/api/generated/constants";
 import type {
   KnowledgeDocument,
@@ -57,7 +57,7 @@ const EMPTY_STATUS_COUNTS: KnowledgeDocumentStatusCounts = {
 };
 const DOCUMENT_POLL_INTERVAL_MS = 5_000;
 function countInflightDocuments(counts: KnowledgeDocumentStatusCounts) {
-  return KNOWLEDGE_DOCUMENT_INFLIGHT_STATUS_VALUES.reduce(
+  return KNOWLEDGE_INFLIGHT_STATUSES.reduce(
     (total, documentStatus) => total + (counts[documentStatus] ?? 0),
     0,
   );
@@ -132,7 +132,7 @@ export function KnowledgesPage() {
       const response = normalizedQuery
         ? await searchKnowledgeGraph({
             query: normalizedQuery,
-            max_nodes: KNOWLEDGE_GRAPH_MAX_NODES,
+            max_nodes: KNOWLEDGE_GRAPH_MAXIMUM_NODES,
           })
         : await getKnowledgeGraph({
             query: "",
@@ -200,13 +200,13 @@ export function KnowledgesPage() {
     if (
       graphExpansionRequestsRef.current.has(node.id)
       || expandedGraphNodeIds.has(node.id)
-      || graph.nodes.length >= KNOWLEDGE_GRAPH_MAX_NODES
+      || graph.nodes.length >= KNOWLEDGE_GRAPH_MAXIMUM_NODES
     ) return;
 
     const previousLimit = graphExpansionLimits[node.id] ?? 0;
     const nextLimit = Math.min(
       previousLimit + KNOWLEDGE_GRAPH_EXPANSION_BATCH_SIZE,
-      KNOWLEDGE_GRAPH_MAX_NODES,
+      KNOWLEDGE_GRAPH_MAXIMUM_NODES,
     );
     const graphRequestId = graphRequestRef.current;
     graphExpansionRequestsRef.current.add(node.id);
@@ -220,9 +220,9 @@ export function KnowledgesPage() {
       if (graphRequestRef.current !== graphRequestId) return;
 
       const incoming = response.data ?? EMPTY_GRAPH;
-      setGraph((current) => mergeKnowledgeGraphs(current, incoming, KNOWLEDGE_GRAPH_MAX_NODES));
+      setGraph((current) => mergeKnowledgeGraphs(current, incoming, KNOWLEDGE_GRAPH_MAXIMUM_NODES));
       setGraphExpansionLimits((current) => ({ ...current, [node.id]: nextLimit }));
-      if (!incoming.is_truncated || nextLimit >= KNOWLEDGE_GRAPH_MAX_NODES) {
+      if (!incoming.is_truncated || nextLimit >= KNOWLEDGE_GRAPH_MAXIMUM_NODES) {
         setExpandedGraphNodeIds((current) => new Set(current).add(node.id));
       }
     } catch (error) {
@@ -390,7 +390,7 @@ export function KnowledgesPage() {
               expansionLimits={graphExpansionLimits}
               expandedNodeIds={expandedGraphNodeIds}
               expandingNodeIds={expandingGraphNodeIds}
-              nodeLimitReached={graph.nodes.length >= KNOWLEDGE_GRAPH_MAX_NODES}
+              nodeLimitReached={graph.nodes.length >= KNOWLEDGE_GRAPH_MAXIMUM_NODES}
               onExpand={expandGraphNode}
             />
           </ResourcePanel>

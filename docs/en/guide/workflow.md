@@ -41,7 +41,15 @@ Correlation uses behavioral, source, and temporal relationships to add activity 
 
 The Incident becomes the shared context for environments, behavior, detections, tasks, evidence, analysis, audit, and reporting.
 
-## 5. Run The Multi-Agent Investigation
+## 5. Coordinate Durable Agent Work
+
+Opening an Incident or environment Console always returns to that object's canonical Agent Session. Once the platform accepts a request, execution continues independently of the browser connection. The operator can leave, reconnect, or open the same Session elsewhere and recover the same ordered history.
+
+V3il advances the main investigation and delegates bounded questions to specialist Runs. Each specialist receives an isolated context and an explicit scope. When the main Run depends on a specialist or a long sandbox operation, it pauses against that exact dependency and continues when the expected result arrives. Concurrent work remains attached to its investigation branch.
+
+Long investigations preserve important decisions and evidence through context compression. If an execution process stops, ownership moves to a fresh Attempt, incomplete context is removed, and confirmed tool outcomes are reused. An external action with an uncertain outcome is held for recovery until its state is resolved. Live updates are replayed from durable history, so the Console remains a projection of the same operational record.
+
+## 6. Run The Multi-Agent Investigation
 
 V3il creates a plan of scoped questions with owners and completion criteria. The specialists contribute as follows:
 
@@ -53,23 +61,25 @@ V3il creates a plan of scoped questions with owners and completion criteria. The
 
 Tasks remain connected to relevant behavior and evidence, making the basis and coverage of each conclusion visible.
 
-## 6. Adapt The Environment
+## 7. Adapt The Environment
 
 When the evidence raises a new question, Ph4ntom can propose an environment change: another service clue, a different response, a richer identity relationship, or a new observation point.
 
 `policy_auto` can apply low-risk changes allowed by policy. `manual_approval` routes changes through operator review. Once deployed, the new version continues to feed the same observation and Incident workflow.
 
-## 7. Reach Intelligence And Response Decisions
+## 8. Reach Intelligence And Response Decisions
 
 The investigation develops intent, attack-chain reconstruction, threat indicators, an attacker profile, and risk assessment. J4ck turns those conclusions into stop conditions, response priorities, and defensive improvements. V3il checks the conclusions for consistency and evidence support.
 
 New material behavior can extend the investigation. Analytical history shows how the team's judgment changed over time.
 
-## 8. Deliver Reports And Knowledge
+## 9. Deliver Reports And Knowledge
 
 When tasks, evidence, and analysis meet the delivery criteria, V3il creates the final report and evidence package. The report references fixed analytical and evidence versions for later review.
 
 Final work can be published to LightRAG so future investigations can retrieve similar behavior, prior conclusions, and response experience.
+
+Finalization establishes a fixed operational record. V3il fixes the report's analysis and evidence references, records the final Agent outcome, and queues knowledge publication as durable follow-up work. Publication retries reuse the same final report and completed investigation state.
 
 ## Operator Decisions
 

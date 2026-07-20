@@ -12,7 +12,7 @@ V3il is an autonomous blue-team operations platform for teams that need to obser
 
 ## Product Positioning
 
-Deception creates a controlled place to observe an attacker. The operational value comes from what the team can learn and decide after the first interaction. V3il keeps environments, behavior, Incidents, investigation tasks, evidence, and analytical conclusions in the same context so a blue team can answer three questions throughout an operation:
+V3il treats deception as an active observation surface within a complete blue-team operating model. Environments, behavior, Incidents, investigation tasks, evidence, and analytical conclusions remain connected so the team can answer three questions throughout an operation:
 
 - What is the attacker doing, and how are the actions related?
 - Which environmental signals should change to test the next hypothesis?
@@ -34,7 +34,7 @@ flowchart LR
   Decide --> Report["Report, evidence, and knowledge"]
 ```
 
-The operator defines the environment objective, runtime location, image, egress policy, and reference material, then describes the intended business surface in the Agent Console. Once the environment is live, V3il collects behavior and detection signals, groups related activity into a ThreatIncident, and coordinates five specialist roles around the investigation. Findings can lead to a risk decision, a report, or another environment change that tests a hypothesis and captures the attacker's next move.
+The operator defines the environment objective, runtime location, image, egress policy, reference material, business surface, and expected interactions. Once the environment is live, V3il collects behavior and detection signals, groups related activity into a ThreatIncident, and coordinates five specialist roles around the investigation. Findings can lead to a risk decision, a report, or another environment change that tests a hypothesis and captures the attacker's next move.
 
 ## Core Capabilities
 
@@ -45,6 +45,15 @@ The operator defines the environment objective, runtime location, image, egress 
 - **Evidence and audit:** Track task scope, evidence references, analytical versions, review decisions, and material state changes.
 - **Intelligence and reporting:** Produce intent, attack-chain reconstruction, indicators, attacker profiles, risk assessments, response guidance, reports, and evidence packages.
 - **Operational infrastructure:** Manage Docker hosts, runtime images, containers, egress proxies, terminals, files, and knowledge.
+
+## Business Workspaces
+
+V3il organizes operations around two durable business spaces:
+
+- **Threat Incident:** The investigation space for correlated behavior, tasks, evidence, analysis, decisions, audit history, reporting, and knowledge publication.
+- **Deception Environment:** The engagement space for attacker-facing services, environment versions, detection coverage, runtime state, observed behavior, and adaptive change.
+
+Each business object owns one canonical Agent Session. Operators entering from the workspace, Agent Console, or Agent Operations return to the same collaboration history and current state.
 
 ## Architecture
 
@@ -71,7 +80,26 @@ The architecture has five primary concerns:
 4. The **behavior and evidence layer** owns correlation, investigation scope, evidence, analytical versions, and audit history.
 5. The **Agent collaboration layer** advances investigation, environment adaptation, and review through role-based work.
 
-## Five-Agent Team
+### Reliable Agent Execution
+
+Agent collaboration follows one product model across chat, Threat Incident, and Deception Environment work:
+
+| Concept | Product responsibility |
+| --- | --- |
+| Session | The durable workspace, business scope, and ordered collaboration history visible to operators. |
+| Run | An accepted objective, including an operator request, specialist assignment, or continuation. |
+| Attempt | One execution of a Run, with a clear recovery boundary when ownership or process state changes. |
+| Context | Persistent working memory for one Agent role, with provenance for accepted decisions, evidence, and tool results. |
+
+The main Run can delegate bounded questions to specialist Runs. A parent Run waiting for a specialist result or sandbox operation records that exact dependency and continues once when the expected result becomes available. Parallel work remains attached to the investigation branch that requested it.
+
+Each specialist works in an isolated, persistent Context with clear provenance. Context compression retains decisions, evidence references, unresolved questions, confirmed tool outcomes, and recent work. An interrupted Attempt leaves accepted history intact and removes incomplete contribution from the next execution boundary.
+
+External actions with a confirmed outcome can continue through the normal workflow. An uncertain tool invocation or Sandbox command enters the Agent Operations recovery queue for an explicit operator decision. The Session resumes only after that ambiguity has been resolved.
+
+The durable event history is the authoritative Agent record. Live updates, reconnects, and historical review all project the same ordered Session state. Completed reports remain available while Knowledge Publication continues as durable follow-up work.
+
+## Agent Defense Team
 
 | Code | Name | Role | Primary responsibility |
 | --- | --- | --- | --- |

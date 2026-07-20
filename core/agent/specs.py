@@ -54,6 +54,8 @@ from core.tools.sandbox import (
     load_skill,
     read_sandbox_command_output,
 )
+from schema.agent.capabilities import AGENT_CAPABILITIES, AgentCapability
+from schema.agent.sessions import AgentCode
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +74,7 @@ class SubagentMount:
 @dataclass(frozen=True, slots=True)
 class AgentSpec:
     code: str
+    capabilities: tuple[AgentCapability, ...] = ()
     tools: tuple[ToolMount, ...] = ()
     subagents: tuple[SubagentMount, ...] = ()
 
@@ -86,20 +89,14 @@ INVESTIGATION_EXECUTION_TOOLS = (
     ToolMount(activate_investigation_task, requires_incident=True),
     ToolMount(block_investigation_task, requires_incident=True),
     ToolMount(submit_investigation_task, requires_incident=True),
-    ToolMount(assign_behavior_events, requires_incident=True),
     ToolMount(record_investigation_evidence, requires_incident=True),
 )
 
 INVESTIGATION_GOVERNANCE_TOOLS = (
     ToolMount(create_investigation_task, requires_incident=True),
+    ToolMount(assign_behavior_events, requires_incident=True),
     ToolMount(review_investigation_task, requires_incident=True),
     ToolMount(update_incident_state, requires_incident=True),
-)
-
-THREAT_ANALYSIS_TOOLS = (
-    ToolMount(record_intent_assessment, requires_incident=True),
-    ToolMount(record_attack_chain, requires_incident=True),
-    ToolMount(record_threat_indicator, requires_incident=True),
 )
 
 DECEPTION_TOOLS = (
@@ -175,24 +172,20 @@ SPECIALIST_DOMAIN_TOOLS: dict[str, tuple[ToolMount, ...]] = {
 AGENT_SPECS: tuple[AgentSpec, ...] = (
     AgentSpec(
         code=DEFAULT_AGENT_CODE,
+        capabilities=AGENT_CAPABILITIES[AgentCode.CSO],
         tools=(
             *INVESTIGATION_CONTEXT_TOOLS,
-            *INVESTIGATION_EXECUTION_TOOLS,
             *INVESTIGATION_GOVERNANCE_TOOLS,
-            *THREAT_ANALYSIS_TOOLS,
-            ToolMount(record_attacker_profile, requires_incident=True),
-            ToolMount(record_risk_assessment, requires_incident=True),
-            *DECEPTION_TOOLS,
             *INTELLIGENCE_REPORT_TOOLS,
             ToolMount(export_report),
             *DETECTION_RULE_READ_TOOLS,
-            *DETECTION_RULE_AUTHORING_TOOLS,
         ),
         subagents=tuple(SubagentMount(code=code) for code in SPECIALIST_AGENT_CODES),
     ),
     *(
         AgentSpec(
             code=code,
+            capabilities=AGENT_CAPABILITIES[AgentCode(code)],
             tools=(
                 *SPECIALIST_BASE_TOOLS,
                 *SPECIALIST_DOMAIN_TOOLS[code],

@@ -121,6 +121,10 @@ class IntelligenceReportSchema(BaseModel):
     analysis_snapshot: list[IntelligenceReportAnalysisSnapshot]
     evidence_manifest: IntelligenceReportEvidenceManifest
     markdown: str
+    artifact_sha256: str
+    artifact_media_type: str
+    artifact_filename: str
+    artifact_size: int
     knowledge_document_name: str
     knowledge_status: KnowledgePublicationStatus
     knowledge_error: str

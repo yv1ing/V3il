@@ -1,8 +1,12 @@
 import asyncio
+import hashlib
+import json
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from sqlmodel import select
+
+from utils.time import utc_now
 
 from database import get_async_session
 from logger import get_logger
@@ -14,6 +18,8 @@ from schema.deception.environments import (
     DeceptionEnvironmentSchema,
     DeceptionEnvironmentStatus,
     DeceptionRevisionKind,
+    DeceptionRevisionBaselineSnapshot,
+    DeceptionRevisionExecutionCheckpoint,
     DeceptionRevisionStatus,
     DeceptionRevisionStepStatus,
 )
@@ -46,6 +52,7 @@ from service.sandbox.lifecycle import (
     start_sandbox_container,
 )
 from service.sandbox.status import status_generation
+from service.runtime.leases import RuntimeLeaseUnavailable, runtime_lease
 from service.threat.audit import add_audit_event
 
 
@@ -69,6 +76,7 @@ class _ClaimedRevision:
     environment_id: int
     revision_id: int
     container_id: int | None
+    container_generation: int
     steps: tuple[_RevisionStepCommand, ...]
     initial: bool
     reference_urls: tuple[str, ...]
@@ -77,6 +85,43 @@ class _ClaimedRevision:
 
 
 async def execute_deception_revision(environment_id: int, revision_id: int, *, user_id: int, user_role: SystemUserRole, agent_code: str = "", session_id: str = "", incident_id: int | None = None, investigation_task_id: int | None = None):
+    try:
+        async with runtime_lease(
+            _revision_lease_name(revision_id),
+            wait_timeout_seconds=0,
+        ) as lease:
+            return await _execute_claimed_revision(
+                environment_id,
+                revision_id,
+                user_id=user_id,
+                user_role=user_role,
+                agent_code=agent_code,
+                session_id=session_id,
+                incident_id=incident_id,
+                investigation_task_id=investigation_task_id,
+                lease=lease,
+            )
+    except RuntimeLeaseUnavailable:
+        return DeceptionRevisionMutationResult(
+            revision=None,
+            environment=None,
+            conflict=True,
+            message="deception revision is already executing",
+        )
+
+
+async def _execute_claimed_revision(
+    environment_id: int,
+    revision_id: int,
+    *,
+    user_id: int,
+    user_role: SystemUserRole,
+    agent_code: str,
+    session_id: str,
+    incident_id: int | None,
+    investigation_task_id: int | None,
+    lease,
+):
     claimed, result = await _claim_revision(
         environment_id,
         revision_id,
@@ -90,40 +135,62 @@ async def execute_deception_revision(environment_id: int, revision_id: int, *, u
     if claimed is None:
         return result
     try:
+        await lease.assert_owned()
         if claimed.initial and claimed.container_id is None:
             claimed, result = await _provision_initial_revision(claimed)
             if claimed is None:
                 return result
+            await lease.assert_owned()
         if claimed.container_id is None:
             raise RuntimeError("claimed deception revision has no execution container")
         if claimed.initial:
+            await lease.assert_owned()
             await copy_reference_bundle_to_container(
                 claimed.environment_id,
                 list(claimed.reference_urls),
                 claimed.container_id,
             )
+            await lease.assert_owned()
         for step in claimed.steps:
-            await _apply_and_verify(claimed.container_id, step)
+            await _apply_and_verify(
+                claimed.container_id,
+                claimed.container_generation,
+                step,
+                lease,
+            )
+        await lease.assert_owned()
         return await _complete(claimed)
     except asyncio.CancelledError:
-        await asyncio.shield(_rollback(claimed, "Revision execution was canceled."))
+        await asyncio.shield(_rollback(claimed, "Revision execution was canceled.", lease=lease))
         raise
     except Exception as exc:
         logger.warning("deception revision failed: %s", revision_id, exc_info=True)
-        return await _rollback(claimed, str(exc) or "Revision execution failed.")
+        return await _rollback(claimed, str(exc) or "Revision execution failed.", lease=lease)
 
 
 async def recover_interrupted_deception_revisions():
-    async with get_async_session() as session:
-        revisions = list((await session.exec(select(
-            DeceptionRevision.id,
-            DeceptionRevision.environment_id,
-            DeceptionRevision.status,
-        ).where(
-            DeceptionRevision.status.in_({DeceptionRevisionStatus.EXECUTING, DeceptionRevisionStatus.ROLLING_BACK})
-        ))).all())
-    for revision_id, environment_id, status in revisions:
-        try:
+    try:
+        async with runtime_lease("deception-revision-recovery", wait_timeout_seconds=0):
+            async with get_async_session() as session:
+                revisions = list((await session.exec(select(
+                    DeceptionRevision.id,
+                    DeceptionRevision.environment_id,
+                    DeceptionRevision.status,
+                ).where(
+                    DeceptionRevision.status.in_({DeceptionRevisionStatus.EXECUTING, DeceptionRevisionStatus.ROLLING_BACK})
+                ))).all())
+            for revision_id, environment_id, status in revisions:
+                await _recover_interrupted_revision(revision_id, environment_id, status)
+    except RuntimeLeaseUnavailable:
+        return
+
+
+async def _recover_interrupted_revision(revision_id, environment_id, status) -> None:
+    try:
+        async with runtime_lease(
+            _revision_lease_name(revision_id),
+            wait_timeout_seconds=20,
+        ) as lease:
             claimed = await _load_claimed(environment_id, revision_id)
             if claimed is None:
                 await _mark_interrupted_recovery_required(
@@ -131,25 +198,27 @@ async def recover_interrupted_deception_revisions():
                     revision_id,
                     "Interrupted revision is missing its execution journal.",
                 )
-                continue
+                return
             if (
                 status == DeceptionRevisionStatus.EXECUTING
                 and all(step.status == DeceptionRevisionStepStatus.PENDING for step in claimed.steps)
                 and await _restore_unstarted_revision(claimed)
             ):
-                continue
-            await _rollback(claimed, "Recovered interrupted revision.")
-        except Exception:
-            logger.exception(
-                "interrupted deception revision recovery failed: revision=%s environment=%s",
-                revision_id,
-                environment_id,
-            )
-            await _mark_interrupted_recovery_required(
-                environment_id,
-                revision_id,
-                "Interrupted revision could not be reconstructed safely.",
-            )
+                return
+            await _rollback(claimed, "Recovered interrupted revision.", lease=lease)
+    except RuntimeLeaseUnavailable:
+        return
+    except Exception:
+        logger.exception(
+            "interrupted deception revision recovery failed: revision=%s environment=%s",
+            revision_id,
+            environment_id,
+        )
+        await _mark_interrupted_recovery_required(
+            environment_id,
+            revision_id,
+            "Interrupted revision could not be reconstructed safely.",
+        )
 
 
 async def recover_deception_revision_rollback(
@@ -160,6 +229,39 @@ async def recover_deception_revision_rollback(
     user_role: SystemUserRole,
     agent_code: str = "",
     session_id: str = "",
+) -> DeceptionRevisionMutationResult:
+    try:
+        async with runtime_lease(
+            _revision_lease_name(revision_id),
+            wait_timeout_seconds=0,
+        ) as lease:
+            return await _recover_deception_revision_rollback_owned(
+                environment_id,
+                revision_id,
+                user_id=user_id,
+                user_role=user_role,
+                agent_code=agent_code,
+                session_id=session_id,
+                lease=lease,
+            )
+    except RuntimeLeaseUnavailable:
+        return DeceptionRevisionMutationResult(
+            revision=None,
+            environment=None,
+            conflict=True,
+            message="deception revision is already executing",
+        )
+
+
+async def _recover_deception_revision_rollback_owned(
+    environment_id: int,
+    revision_id: int,
+    *,
+    user_id: int,
+    user_role: SystemUserRole,
+    agent_code: str,
+    session_id: str,
+    lease,
 ) -> DeceptionRevisionMutationResult:
     claimed, result, previous_error = await _claim_rollback_recovery(
         environment_id,
@@ -175,6 +277,7 @@ async def recover_deception_revision_rollback(
         claimed,
         f"Rollback recovery requested after: {previous_error}",
         report_original_failure=False,
+        lease=lease,
     )
 
 
@@ -214,6 +317,15 @@ async def _claim_revision(environment_id, revision_id, *, user_id, user_role, ag
                 environment=None,
                 conflict=True,
                 message="a planned revision must contain only pending steps",
+            )
+        try:
+            _validate_frozen_plan(revision, step_rows)
+        except ValueError as exc:
+            return None, DeceptionRevisionMutationResult(
+                revision=None,
+                environment=None,
+                conflict=True,
+                message=str(exc),
             )
         container_spec = None
         initial = revision.kind == DeceptionRevisionKind.INITIAL
@@ -260,10 +372,26 @@ async def _claim_revision(environment_id, revision_id, *, user_id, user_role, ag
                     message="environment sandbox container must be running before revision execution",
                 )
             revision.execution_container_id = container_id
+        baseline = DeceptionRevisionBaselineSnapshot(
+            environment_status=environment.status,
+            persona=environment.persona,
+            services=environment.services,
+            applied_revision_id=environment.applied_revision_id,
+            container=_container_state(container),
+            recorded_at=utc_now(),
+        )
+        revision.baseline_snapshot = baseline.model_dump(mode="json")
+        revision.execution_checkpoint = DeceptionRevisionExecutionCheckpoint(
+            phase="claimed",
+            step_sequence=None,
+            container=_container_state(container),
+            recorded_at=utc_now(),
+        ).model_dump(mode="json")
         claimed = _ClaimedRevision(
             environment_id=environment_id,
             revision_id=revision_id,
             container_id=container_id,
+            container_generation=status_generation(container) if container is not None else 0,
             steps=tuple(_snapshot_step(step) for step in step_rows),
             initial=initial,
             reference_urls=tuple(environment.reference_urls),
@@ -271,7 +399,7 @@ async def _claim_revision(environment_id, revision_id, *, user_id, user_role, ag
             container_spec=container_spec,
         )
         revision.status = DeceptionRevisionStatus.EXECUTING
-        revision.started_at = datetime.now()
+        revision.started_at = utc_now()
         environment.status = DeceptionEnvironmentStatus.BUILDING if revision.kind == DeceptionRevisionKind.INITIAL else DeceptionEnvironmentStatus.ADAPTING
         environment.last_error = ""
         session.add(revision)
@@ -359,7 +487,7 @@ async def _claim_rollback_recovery(
         revision.status = DeceptionRevisionStatus.ROLLING_BACK
         revision.resolved_at = None
         environment.status = next_environment_status
-        environment.updated_at = datetime.now()
+        environment.updated_at = utc_now()
         session.add(revision)
         session.add(environment)
         await add_audit_event(
@@ -377,6 +505,7 @@ async def _claim_rollback_recovery(
             environment_id=environment_id,
             revision_id=revision_id,
             container_id=container.id if container is not None else None,
+            container_generation=status_generation(container) if container is not None else 0,
             steps=tuple(_snapshot_step(step) for step in step_rows),
             initial=revision.kind == DeceptionRevisionKind.INITIAL,
             reference_urls=tuple(environment.reference_urls),
@@ -431,7 +560,7 @@ async def _provision_initial_revision(
             container_id=container_id,
         )
     started = await start_sandbox_container(container_id)
-    if not started.succeeded:
+    if not started.succeeded or started.record is None:
         return None, await _fail_claimed_revision(
             claimed,
             started.message or "Sandbox container failed to start.",
@@ -449,6 +578,7 @@ async def _provision_initial_revision(
     return replace(
         claimed,
         container_id=container_id,
+        container_generation=started.record.container.generation,
         container_spec=resolved_spec,
     ), DeceptionRevisionMutationResult(revision=None, environment=None)
 
@@ -559,7 +689,7 @@ async def _fail_claimed_revision(
             else message
         )
         revision.result = final_message
-        revision.resolved_at = None if not cleanup_succeeded else datetime.now()
+        revision.resolved_at = None if not cleanup_succeeded else utc_now()
         environment.status = terminal.environment_status
         environment.applied_revision_id = terminal.applied_revision_id
         environment.active_revision_id = terminal.active_revision_id
@@ -604,7 +734,7 @@ async def _mark_interrupted_recovery_required(
         session.add(revision)
         environment.status = DeceptionEnvironmentStatus.RECOVERY_REQUIRED
         environment.last_error = message
-        environment.updated_at = datetime.now()
+        environment.updated_at = utc_now()
         session.add(environment)
 
 
@@ -648,7 +778,7 @@ async def _restore_unstarted_revision(claimed: _ClaimedRevision) -> bool:
             claimed.revision_id,
         )
         environment.last_error = ""
-        environment.updated_at = datetime.now()
+        environment.updated_at = utc_now()
         session.add(revision)
         session.add(environment)
         if claimed.container_id is not None:
@@ -670,24 +800,59 @@ async def _restore_unstarted_revision(claimed: _ClaimedRevision) -> bool:
     return True
 
 
-async def _apply_and_verify(container_id: int, step: _RevisionStepCommand):
+async def _apply_and_verify(
+    container_id: int,
+    container_generation: int,
+    step: _RevisionStepCommand,
+    lease,
+):
     await _update_step(
         step.id,
         expected={DeceptionRevisionStepStatus.PENDING},
         status=DeceptionRevisionStepStatus.APPLYING,
-        started_at=datetime.now(),
+        started_at=utc_now(),
+        before_state=await _capture_container_state(container_id),
     )
-    applied = await execute_sandbox_container_command(container_id, step.apply_command, step.timeout_seconds)
+    await lease.assert_owned()
+    applied = await execute_sandbox_container_command(
+        container_id,
+        step.apply_command,
+        step.timeout_seconds,
+        expected_generation=container_generation,
+    )
+    await lease.assert_owned()
     if applied.exit_code != 0:
-        await _update_step(step.id, expected={DeceptionRevisionStepStatus.APPLYING}, status=DeceptionRevisionStepStatus.FAILED, apply_exit_code=applied.exit_code, apply_output=applied.output[:_OUTPUT_LIMIT], error="apply command failed", finished_at=datetime.now())
+        await _update_step(step.id, expected={DeceptionRevisionStepStatus.APPLYING}, status=DeceptionRevisionStepStatus.FAILED, apply_exit_code=applied.exit_code, apply_output=applied.output[:_OUTPUT_LIMIT], error="apply command failed", finished_at=utc_now())
         raise RuntimeError(_step_failure_message(step.sequence, "apply", applied.exit_code, applied.output))
-    await _update_step(step.id, expected={DeceptionRevisionStepStatus.APPLYING}, status=DeceptionRevisionStepStatus.APPLIED, apply_exit_code=applied.exit_code, apply_output=applied.output[:_OUTPUT_LIMIT])
+    await _update_step(
+        step.id,
+        expected={DeceptionRevisionStepStatus.APPLYING},
+        status=DeceptionRevisionStepStatus.APPLIED,
+        apply_exit_code=applied.exit_code,
+        apply_output=applied.output[:_OUTPUT_LIMIT],
+        after_apply_state=await _capture_container_state(container_id),
+    )
     await _update_step(step.id, expected={DeceptionRevisionStepStatus.APPLIED}, status=DeceptionRevisionStepStatus.VERIFYING)
-    verified = await execute_sandbox_container_command(container_id, step.verify_command, step.timeout_seconds)
+    await lease.assert_owned()
+    verified = await execute_sandbox_container_command(
+        container_id,
+        step.verify_command,
+        step.timeout_seconds,
+        expected_generation=container_generation,
+    )
+    await lease.assert_owned()
     if verified.exit_code != 0:
-        await _update_step(step.id, expected={DeceptionRevisionStepStatus.VERIFYING}, status=DeceptionRevisionStepStatus.FAILED, verify_exit_code=verified.exit_code, verify_output=verified.output[:_OUTPUT_LIMIT], error="verification command failed", finished_at=datetime.now())
+        await _update_step(step.id, expected={DeceptionRevisionStepStatus.VERIFYING}, status=DeceptionRevisionStepStatus.FAILED, verify_exit_code=verified.exit_code, verify_output=verified.output[:_OUTPUT_LIMIT], error="verification command failed", finished_at=utc_now())
         raise RuntimeError(_step_failure_message(step.sequence, "verification", verified.exit_code, verified.output))
-    await _update_step(step.id, expected={DeceptionRevisionStepStatus.VERIFYING}, status=DeceptionRevisionStepStatus.VERIFIED, verify_exit_code=verified.exit_code, verify_output=verified.output[:_OUTPUT_LIMIT], finished_at=datetime.now())
+    await _update_step(
+        step.id,
+        expected={DeceptionRevisionStepStatus.VERIFYING},
+        status=DeceptionRevisionStepStatus.VERIFIED,
+        verify_exit_code=verified.exit_code,
+        verify_output=verified.output[:_OUTPUT_LIMIT],
+        after_verify_state=await _capture_container_state(container_id),
+        finished_at=utc_now(),
+    )
 
 
 async def _rollback(
@@ -695,7 +860,9 @@ async def _rollback(
     reason: str,
     *,
     report_original_failure: bool = True,
+    lease,
 ):
+    await lease.assert_owned()
     async with get_async_session() as session, session.begin():
         revision = (await session.exec(select(DeceptionRevision).where(
             DeceptionRevision.id == claimed.revision_id,
@@ -748,11 +915,14 @@ async def _rollback(
         try:
             if claimed.container_id is None:
                 raise RuntimeError("revision rollback has no execution container")
+            await lease.assert_owned()
             result = await execute_sandbox_container_command(
                 claimed.container_id,
                 step.rollback_command,
                 step.timeout_seconds,
+                expected_generation=claimed.container_generation,
             )
+            await lease.assert_owned()
             step_failed = result.exit_code != 0
             if step_failed:
                 rollback_failures.append(f"step {step.sequence} exited with {result.exit_code}")
@@ -762,8 +932,13 @@ async def _rollback(
                 status=DeceptionRevisionStepStatus.ROLLBACK_FAILED if step_failed else DeceptionRevisionStepStatus.ROLLED_BACK,
                 rollback_exit_code=result.exit_code,
                 rollback_output=result.output[:_OUTPUT_LIMIT],
+                after_rollback_state=(
+                    await _capture_container_state(claimed.container_id)
+                    if claimed.container_id is not None
+                    else None
+                ),
                 error="rollback command failed" if step_failed else "",
-                finished_at=datetime.now(),
+                finished_at=utc_now(),
             )
         except asyncio.CancelledError:
             raise
@@ -774,7 +949,7 @@ async def _rollback(
                 expected={DeceptionRevisionStepStatus.ROLLING_BACK},
                 status=DeceptionRevisionStepStatus.ROLLBACK_FAILED,
                 error=str(exc) or "rollback command failed",
-                finished_at=datetime.now(),
+                finished_at=utc_now(),
             )
     successful_terminal = None
     if not rollback_failures:
@@ -791,11 +966,13 @@ async def _rollback(
             and successful_terminal.release_platform_container
             and claimed.container_id is not None
         ):
+            await lease.assert_owned()
             released = await delete_revision_sandbox_container(
                 claimed.container_id,
                 environment_id=claimed.environment_id,
                 revision_id=claimed.revision_id,
             )
+            await lease.assert_owned()
             if not released:
                 rollback_failures.append("platform container cleanup failed")
     async with get_async_session() as session, session.begin():
@@ -834,13 +1011,24 @@ async def _rollback(
         revision.result = final_reason
         revision.failure_reason = failure_reason
         revision.rollback_error = rollback_error
-        revision.resolved_at = None if failed else datetime.now()
+        revision.resolved_at = None if failed else utc_now()
+        rollback_container = (
+            await session.get(SandboxContainer, claimed.container_id)
+            if claimed.container_id is not None
+            else None
+        )
+        revision.execution_checkpoint = DeceptionRevisionExecutionCheckpoint(
+            phase="recovery_required" if failed else "rolled_back",
+            step_sequence=None,
+            container=_container_state(rollback_container),
+            recorded_at=utc_now(),
+        ).model_dump(mode="json")
         session.add(revision)
         environment.status = terminal.environment_status
         environment.applied_revision_id = terminal.applied_revision_id
         environment.active_revision_id = terminal.active_revision_id
         environment.last_error = final_reason
-        environment.updated_at = datetime.now()
+        environment.updated_at = utc_now()
         session.add(environment)
         await add_audit_event(
             session,
@@ -892,7 +1080,14 @@ async def _complete(claimed):
         revision.failure_reason = ""
         revision.rollback_error = ""
         revision.result = "Revision applied and verified."
-        revision.resolved_at = datetime.now()
+        revision.resolved_at = utc_now()
+        completed_container = await session.get(SandboxContainer, claimed.container_id)
+        revision.execution_checkpoint = DeceptionRevisionExecutionCheckpoint(
+            phase="completed",
+            step_sequence=None,
+            container=_container_state(completed_container),
+            recorded_at=utc_now(),
+        ).model_dump(mode="json")
         if revision.kind == DeceptionRevisionKind.ADAPTIVE:
             revision.observation_deadline = revision.resolved_at + timedelta(
                 seconds=revision.observation_window_seconds
@@ -903,7 +1098,7 @@ async def _complete(claimed):
         environment.active_revision_id = terminal.active_revision_id
         environment.status = terminal.environment_status
         environment.last_error = ""
-        environment.updated_at = datetime.now()
+        environment.updated_at = utc_now()
         artifacts = list((await session.exec(select(DeceptionArtifact).where(
             DeceptionArtifact.environment_id == claimed.environment_id,
         ).with_for_update())).all())
@@ -975,6 +1170,7 @@ async def _load_claimed(environment_id, revision_id):
             environment_id=environment_id,
             revision_id=revision_id,
             container_id=container.id if container is not None else None,
+            container_generation=status_generation(container) if container is not None else 0,
             steps=tuple(_snapshot_step(step) for step in step_rows),
             initial=initial,
             reference_urls=tuple(environment.reference_urls),
@@ -1009,6 +1205,7 @@ async def _resolve_execution_container(
             revision.execution_container_id,
             environment.sandbox_container_id,
             provisioned[0].id if provisioned else None,
+            _checkpoint_container_id(revision.execution_checkpoint),
         )
         if candidate_id is not None
     }
@@ -1075,6 +1272,82 @@ async def _update_step(
         for field, value in updates.items():
             setattr(step, field, value)
         session.add(step)
+        revision = (await session.exec(select(DeceptionRevision).where(
+            DeceptionRevision.id == step.revision_id
+        ).with_for_update())).one()
+        container = (
+            await session.get(SandboxContainer, revision.execution_container_id)
+            if revision.execution_container_id is not None
+            else None
+        )
+        status = updates.get("status", step.status)
+        revision.execution_checkpoint = DeceptionRevisionExecutionCheckpoint(
+            phase=status.value if isinstance(status, DeceptionRevisionStepStatus) else str(status),
+            step_sequence=step.sequence,
+            container=_container_state(container),
+            recorded_at=utc_now(),
+        ).model_dump(mode="json")
+        session.add(revision)
+
+
+async def _capture_container_state(container_id: int):
+    async with get_async_session() as session:
+        state = _container_state(await session.get(SandboxContainer, container_id))
+        return state.model_dump(mode="json") if state is not None else None
+
+
+def _container_state(container: SandboxContainer | None):
+    if container is None or container.id is None:
+        return None
+    from schema.deception.environments import DeceptionContainerExecutionState
+
+    return DeceptionContainerExecutionState(
+        container_id=container.id,
+        status=container.status,
+        container_hash=container.container_hash,
+        status_generation=status_generation(container),
+        recorded_at=utc_now(),
+    )
+
+
+def _validate_frozen_plan(
+    revision: DeceptionRevision,
+    steps: tuple[DeceptionRevisionStep, ...],
+) -> None:
+    canonical = json.dumps(
+        revision.plan_snapshot,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    if hashlib.sha256(canonical).hexdigest() != revision.plan_sha256:
+        raise ValueError("deception revision plan snapshot integrity validation failed")
+    snapshot_steps = revision.plan_snapshot.get("steps")
+    if not isinstance(snapshot_steps, list) or len(snapshot_steps) != len(steps):
+        raise ValueError("deception revision step journal does not match the frozen plan")
+    for persisted, frozen in zip(steps, snapshot_steps, strict=True):
+        current = {
+            "kind": persisted.kind,
+            "target": persisted.target,
+            "parameters": persisted.parameters,
+            "expected_effect": persisted.expected_effect,
+            "apply_command": persisted.apply_command,
+            "verify_command": persisted.verify_command,
+            "rollback_command": persisted.rollback_command,
+            "timeout_seconds": persisted.timeout_seconds,
+        }
+        if current != frozen:
+            raise ValueError(
+                f"deception revision step {persisted.sequence} differs from the frozen plan"
+            )
+
+
+def _checkpoint_container_id(checkpoint) -> int | None:
+    if not isinstance(checkpoint, dict):
+        return None
+    container = checkpoint.get("container")
+    value = container.get("container_id") if isinstance(container, dict) else None
+    return value if isinstance(value, int) else None
 
 
 def _step_failure_message(sequence: int, phase: str, exit_code: int, output: str) -> str:
@@ -1083,3 +1356,7 @@ def _step_failure_message(sequence: int, phase: str, exit_code: int, output: str
         summary = "..." + summary[-997:]
     message = f"revision step {sequence} {phase} failed with exit code {exit_code}"
     return f"{message}: {summary}" if summary else message
+
+
+def _revision_lease_name(revision_id: int) -> str:
+    return f"deception-revision:{revision_id}"

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import json
+from dataclasses import replace
 
 from agents import (
     Agent,
+    FunctionTool,
     FunctionToolResult,
     Model,
     ModelSettings,
@@ -28,29 +29,25 @@ from core.tools.sandbox import (
     execute_sync_command,
     load_skill,
 )
-from schema.sandbox.async_jobs import SandboxAsyncJobStatus
 
 
-async def _end_turn_after_async_dispatch(
-    _ctx: RunContextWrapper[AgentRuntimeContext],
+async def _end_turn_after_durable_wait_dispatch(
+    ctx: RunContextWrapper[AgentRuntimeContext],
     results: list[FunctionToolResult],
 ) -> ToolsToFinalOutputResult:
-    """End the turn the moment an async command is successfully dispatched.
+    """End the model turn after a tool establishes a durable runtime wait.
 
-    Dispatching background work is turn-terminal: the agent stops here and is
-    woken by the completion notification, so it can never poll for the result.
-    A failed dispatch is not terminal, letting the agent react in the same turn.
+    Durable work is resumed by the runtime through a fresh Attempt. Failed tool
+    calls do not set the wait state and remain available to the current turn.
     """
-    for result in results:
-        if getattr(result.tool, "name", None) != execute_async_command.name:
-            continue
-        try:
-            status = json.loads(result.output).get("status")
-        except (TypeError, ValueError):
-            status = None
-        if status == SandboxAsyncJobStatus.RUNNING.value:
-            return ToolsToFinalOutputResult(is_final_output=True, final_output=result.output)
-    return ToolsToFinalOutputResult(is_final_output=False)
+    runtime = ctx.context
+    if not runtime.wait_requested:
+        return ToolsToFinalOutputResult(is_final_output=False)
+    if runtime.wait_reason is None or not runtime.wait_reference_id:
+        raise RuntimeError("durable wait dispatch did not establish a complete wait state")
+    if not results:
+        raise RuntimeError("durable wait dispatch completed without a tool result")
+    return ToolsToFinalOutputResult(is_final_output=True, final_output=results[-1].output)
 
 
 class AgentRegistry:
@@ -129,11 +126,11 @@ class AgentRegistry:
         )
 
         tools: list[Tool] = [
-            mount.tool for mount in spec.tools
+            _guard_tool_execution(mount.tool) for mount in spec.tools
             if _tool_mount_available(mount, graph.tool_snapshot)
         ]
         if spec.subagents:
-            tools.extend(_build_subagent_tools(spec, self))
+            tools.extend(_guard_tool_execution(tool) for tool in _build_subagent_tools(spec, self))
 
         return Agent(
             name=cfg.name,
@@ -148,7 +145,7 @@ class AgentRegistry:
                 ) if part
             ),
             tools=tools,
-            tool_use_behavior=_end_turn_after_async_dispatch,
+            tool_use_behavior=_end_turn_after_durable_wait_dispatch,
         )
 
 
@@ -196,6 +193,22 @@ def _has_tool(spec: AgentSpec, tool: Tool) -> bool:
 
 def _has_investigation_tool(spec: AgentSpec) -> bool:
     return any(mount.requires_incident for mount in spec.tools)
+
+
+def _guard_tool_execution(tool: Tool) -> Tool:
+    if not isinstance(tool, FunctionTool):
+        return tool
+    invoke = tool.on_invoke_tool
+
+    async def invoke_with_journal(ctx, arguments):
+        return await ctx.context.invoke_tool(
+            tool.name,
+            ctx.tool_call_id,
+            arguments,
+            lambda: invoke(ctx, arguments),
+        )
+
+    return replace(tool, on_invoke_tool=invoke_with_journal)
 
 
 def _tool_mount_available(mount: ToolMount, snapshot: AgentToolSnapshot) -> bool:
